@@ -166,6 +166,24 @@ class TestEvals:
         )
         mock_evaluate.assert_called_once()
 
+    @pytest.mark.usefixtures("google_auth_mock")
+    @mock.patch.object(_evals_common, "_execute_evaluation")
+    def test_eval_evaluate_with_agent_info(self, mock_execute_evaluation):
+        """Tests that agent_info is passed to _execute_evaluation."""
+        dataset = vertexai_genai_types.EvaluationDataset(
+            eval_dataset_df=pd.DataFrame([{"prompt": "p1", "response": "r1"}])
+        )
+        agent_info = {"agent1": {"name": "agent1", "instruction": "instruction1"}}
+        self.client.evals.evaluate(
+            dataset=dataset,
+            metrics=[vertexai_genai_types.Metric(name="exact_match")],
+            agent_info=agent_info,
+        )
+        mock_execute_evaluation.assert_called_once()
+        _, kwargs = mock_execute_evaluation.call_args
+        assert "agent_info" in kwargs
+        assert kwargs["agent_info"] == agent_info
+
 
 class TestEvalsRunInference:
     """Unit tests for the Evals run_inference method."""
@@ -1885,6 +1903,28 @@ class TestFlattenEvalDataConverter:
         eval_case = result_dataset.eval_cases[0]
         assert eval_case.custom_column == "custom_value"
 
+    def test_convert_with_agent_eval_fields(self):
+        """Tests that agent eval data is converted correctly from a flattened format."""
+        raw_data_df = pd.DataFrame(
+            {
+                "prompt": ["Hello"],
+                "response": ["Hi"],
+                "intermediate_events": [
+                    [
+                        {
+                            "event_id": "event1",
+                            "content": {"parts": [{"text": "intermediate event"}]},
+                        }
+                    ]
+                ],
+            }
+        )
+        raw_data = raw_data_df.to_dict(orient="records")
+        result_dataset = self.converter.convert(raw_data)
+        assert len(result_dataset.eval_cases) == 1
+        eval_case = result_dataset.eval_cases[0]
+        assert eval_case.intermediate_events[0].event_id == "event1"
+
 
 class TestOpenAIDataConverter:
     """Unit tests for the _OpenAIDataConverter class."""
@@ -2297,10 +2337,10 @@ class TestObservabilityDataConverter:
         )
 
 
-class TestAgentMetadata:
-    """Unit tests for the AgentMetadata class."""
+class TestAgentInfo:
+    """Unit tests for the AgentInfo class."""
 
-    def test_agent_metadata_creation(self):
+    def test_agent_info_creation(self):
         tool = genai_types.Tool(
             function_declarations=[
                 genai_types.FunctionDeclaration(
@@ -2313,18 +2353,16 @@ class TestAgentMetadata:
                 )
             ]
         )
-        agent_metadata = vertexai_genai_types.AgentMetadata(
+        agent_info = vertexai_genai_types.AgentInfo(
             name="agent1",
             instruction="instruction1",
             description="description1",
             tool_declarations=[tool],
-            sub_agent_names=["sub_agent1"],
         )
-        assert agent_metadata.name == "agent1"
-        assert agent_metadata.instruction == "instruction1"
-        assert agent_metadata.description == "description1"
-        assert agent_metadata.tool_declarations == [tool]
-        assert agent_metadata.sub_agent_names == ["sub_agent1"]
+        assert agent_info.name == "agent1"
+        assert agent_info.instruction == "instruction1"
+        assert agent_info.description == "description1"
+        assert agent_info.tool_declarations == [tool]
 
 
 class TestEvent:
@@ -2359,13 +2397,11 @@ class TestEvalCase:
                 )
             ]
         )
-        agent_metadata = {
-            "agent1": vertexai_genai_types.AgentMetadata(
-                name="agent1",
-                instruction="instruction1",
-                tool_declarations=[tool],
-            )
-        }
+        agent_info = vertexai_genai_types.AgentInfo(
+            name="agent1",
+            instruction="instruction1",
+            tool_declarations=[tool],
+        )
         intermediate_events = [
             vertexai_genai_types.Event(
                 event_id="event1",
@@ -2381,12 +2417,24 @@ class TestEvalCase:
                     response=genai_types.Content(parts=[genai_types.Part(text="Hi")])
                 )
             ],
-            agent_metadata=agent_metadata,
+            agent_info=agent_info,
             intermediate_events=intermediate_events,
         )
 
-        assert eval_case.agent_metadata == agent_metadata
+        assert eval_case.agent_info == agent_info
         assert eval_case.intermediate_events == intermediate_events
+
+
+class TestSessionInput:
+    """Unit tests for the SessionInput class."""
+
+    def test_session_input_creation(self):
+        session_input = vertexai_genai_types.SessionInput(
+            user_id="user1",
+            state={"key": "value"},
+        )
+        assert session_input.user_id == "user1"
+        assert session_input.state == {"key": "value"}
 
 
 class TestMetric:
@@ -3499,6 +3547,66 @@ class TestEvalsRunEvaluation:
         mock_eval_dependencies["mock_evaluate_instances"].assert_called_once()
         call_args = mock_eval_dependencies["mock_evaluate_instances"].call_args
         assert "exact_match_input" in call_args[1]["metric_config"]
+
+    def test_execute_evaluation_with_agent_info(
+        self, mock_api_client_fixture, mock_eval_dependencies
+    ):
+        dataset_df = pd.DataFrame(
+            [
+                {
+                    "prompt": "Test prompt",
+                    "response": "Test response",
+                    "reference": "Test reference",
+                }
+            ]
+        )
+        input_dataset = vertexai_genai_types.EvaluationDataset(
+            eval_dataset_df=dataset_df
+        )
+        predefined_metric = vertexai_genai_types.PredefinedMetricSpec(
+                metric_spec_name="tool_search_validity")
+        tool = {
+            "function_declarations": [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather in a location",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"location": {"type": "string"}},
+                    },
+                }
+            ]
+        }
+        agent_info = {
+                "name": "agent1",
+                "instruction": "instruction1",
+                "description": "description1",
+                "tool_declarations": [tool],
+        }
+
+        result = _evals_common._execute_evaluation(
+            api_client=mock_api_client_fixture,
+            dataset=input_dataset,
+            metrics=[predefined_metric],
+            agent_info=agent_info,
+        )
+
+        assert isinstance(result, vertexai_genai_types.EvaluationResult)
+        assert len(result.eval_case_results) == 1
+        assert result.agent_info.name == "agent1"
+        assert result.agent_info.instruction == "instruction1"
+        assert result.agent_info.tool_declarations == [genai_types.Tool(
+            function_declarations=[
+                genai_types.FunctionDeclaration(
+                    name="get_weather",
+                    description="Get weather in a location",
+                    parameters={
+                        "type": "object",
+                        "properties": {"location": {"type": "string"}},
+                    },
+                )
+            ]
+        )]
 
     def test_execute_evaluation_translation_metric(
         self, mock_api_client_fixture, mock_eval_dependencies

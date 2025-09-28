@@ -1221,6 +1221,83 @@ class MapInstanceDict(TypedDict, total=False):
 MapInstanceOrDict = Union[MapInstance, MapInstanceDict]
 
 
+class Tools(_common.BaseModel):
+    """Represents a list of tools for an agent."""
+
+    tool: Optional[list[genai_types.Tool]] = Field(
+        default=None,
+        description="""List of tools: each tool can have multiple function declarations.""",
+    )
+
+
+class ToolsDict(TypedDict, total=False):
+    """Represents a list of tools for an agent."""
+
+    tool: Optional[list[genai_types.ToolDict]]
+    """List of tools: each tool can have multiple function declarations."""
+
+
+ToolsOrDict = Union[Tools, ToolsDict]
+
+
+class Events(_common.BaseModel):
+    """Represents a list of events for an agent."""
+
+    event: Optional[list[genai_types.Content]] = Field(
+        default=None, description="""A list of events."""
+    )
+
+
+class EventsDict(TypedDict, total=False):
+    """Represents a list of events for an agent."""
+
+    event: Optional[list[genai_types.ContentDict]]
+    """A list of events."""
+
+
+EventsOrDict = Union[Events, EventsDict]
+
+
+class AgentData(_common.BaseModel):
+    """Contains data specific to agent evaluations."""
+
+    tool_declarations_text: Optional[str] = Field(
+        default=None,
+        description="""A JSON string containing a list of tools available to an agent.""",
+    )
+    tools: Optional[Tools] = Field(default=None, description="""List of tools.""")
+    developer_instruction: Optional[InstanceData] = Field(
+        default=None,
+        description="""A field containing instructions from the developer for the agent.""",
+    )
+    events_text: Optional[str] = Field(
+        default=None, description="""A JSON string containing a sequence of events."""
+    )
+    events: Optional[Events] = Field(default=None, description="""A list of events.""")
+
+
+class AgentDataDict(TypedDict, total=False):
+    """Contains data specific to agent evaluations."""
+
+    tool_declarations_text: Optional[str]
+    """A JSON string containing a list of tools available to an agent."""
+
+    tools: Optional[ToolsDict]
+    """List of tools."""
+
+    developer_instruction: Optional[InstanceDataDict]
+    """A field containing instructions from the developer for the agent."""
+
+    events_text: Optional[str]
+    """A JSON string containing a sequence of events."""
+
+    events: Optional[EventsDict]
+    """A list of events."""
+
+
+AgentDataOrDict = Union[AgentData, AgentDataDict]
+
+
 class EvaluationInstance(_common.BaseModel):
     """A single instance to be evaluated."""
 
@@ -1239,6 +1316,9 @@ class EvaluationInstance(_common.BaseModel):
     other_data: Optional[MapInstance] = Field(
         default=None,
         description="""Other data used to populate placeholders based on their key.""",
+    )
+    agent_data: Optional[AgentData] = Field(
+        default=None, description="""Data used for agent evaluation."""
     )
     rubric_groups: Optional[dict[str, "RubricGroup"]] = Field(
         default=None,
@@ -1260,6 +1340,9 @@ class EvaluationInstanceDict(TypedDict, total=False):
 
     other_data: Optional[MapInstanceDict]
     """Other data used to populate placeholders based on their key."""
+
+    agent_data: Optional[AgentDataDict]
+    """Data used for agent evaluation."""
 
     rubric_groups: Optional[dict[str, "RubricGroupDict"]]
     """Named groups of rubrics associated with this prompt. The key is a user-defined name for the rubric group."""
@@ -9926,8 +10009,8 @@ class EvalRunInferenceConfigDict(TypedDict, total=False):
 EvalRunInferenceConfigOrDict = Union[EvalRunInferenceConfig, EvalRunInferenceConfigDict]
 
 
-class AgentMetadata(_common.BaseModel):
-    """AgentMetadata for agent eval."""
+class AgentInfo(_common.BaseModel):
+    """The agent info of an agent, used for agent eval."""
 
     name: Optional[str] = Field(
         default=None, description="""Agent name, used as an identifier."""
@@ -9941,13 +10024,10 @@ class AgentMetadata(_common.BaseModel):
     tool_declarations: Optional[genai_types.ToolListUnion] = Field(
         default=None, description="""List of tools used by the Agent."""
     )
-    sub_agent_names: Optional[list[str]] = Field(
-        default=None, description="""List of sub-agent names."""
-    )
 
 
-class AgentMetadataDict(TypedDict, total=False):
-    """AgentMetadata for agent eval."""
+class AgentInfoDict(TypedDict, total=False):
+    """The agent info of an agent, used for agent eval."""
 
     name: Optional[str]
     """Agent name, used as an identifier."""
@@ -9961,11 +10041,8 @@ class AgentMetadataDict(TypedDict, total=False):
     tool_declarations: Optional[genai_types.ToolListUnionDict]
     """List of tools used by the Agent."""
 
-    sub_agent_names: Optional[list[str]]
-    """List of sub-agent names."""
 
-
-AgentMetadataOrDict = Union[AgentMetadata, AgentMetadataDict]
+AgentInfoOrDict = Union[AgentInfo, AgentInfoDict]
 
 
 class ContentMapContents(_common.BaseModel):
@@ -10033,78 +10110,12 @@ class EvalCaseMetricResultDict(TypedDict, total=False):
 EvalCaseMetricResultOrDict = Union[EvalCaseMetricResult, EvalCaseMetricResultDict]
 
 
-class Message(_common.BaseModel):
-    """Represents a single message turn in a conversation."""
-
-    turn_id: Optional[str] = Field(
-        default=None, description="""Unique identifier for the message turn."""
-    )
-    content: Optional[genai_types.Content] = Field(
-        default=None, description="""Content of the message, including function call."""
-    )
-    creation_timestamp: Optional[datetime.datetime] = Field(
-        default=None,
-        description="""Timestamp indicating when the message was created.""",
-    )
-    author: Optional[str] = Field(
-        default=None, description="""Name of the entity that produced the message."""
-    )
-
-
-class MessageDict(TypedDict, total=False):
-    """Represents a single message turn in a conversation."""
-
-    turn_id: Optional[str]
-    """Unique identifier for the message turn."""
-
-    content: Optional[genai_types.ContentDict]
-    """Content of the message, including function call."""
-
-    creation_timestamp: Optional[datetime.datetime]
-    """Timestamp indicating when the message was created."""
-
-    author: Optional[str]
-    """Name of the entity that produced the message."""
-
-
-MessageOrDict = Union[Message, MessageDict]
-
-
-class AgentData(_common.BaseModel):
-    """Container for all agent-specific data."""
-
-    tool_use_trajectory: Optional[list[Message]] = Field(
-        default=None, description="""Tool use trajectory in chronological order."""
-    )
-    intermediate_responses: Optional[list[Message]] = Field(
-        default=None,
-        description="""Intermediate responses generated by sub-agents to convey progress or status in a multi-agent system, distinct from the final response.""",
-    )
-
-
-class AgentDataDict(TypedDict, total=False):
-    """Container for all agent-specific data."""
-
-    tool_use_trajectory: Optional[list[MessageDict]]
-    """Tool use trajectory in chronological order."""
-
-    intermediate_responses: Optional[list[MessageDict]]
-    """Intermediate responses generated by sub-agents to convey progress or status in a multi-agent system, distinct from the final response."""
-
-
-AgentDataOrDict = Union[AgentData, AgentDataDict]
-
-
 class ResponseCandidate(_common.BaseModel):
     """A model-generated content to the prompt."""
 
     response: Optional[genai_types.Content] = Field(
         default=None,
         description="""The final model-generated response to the `prompt`.""",
-    )
-    agent_data: Optional[AgentData] = Field(
-        default=None,
-        description="""Agent-specific data including tool use trajectory and intermediate responses for more complex interactions.""",
     )
 
 
@@ -10114,8 +10125,8 @@ class ResponseCandidateDict(TypedDict, total=False):
     response: Optional[genai_types.ContentDict]
     """The final model-generated response to the `prompt`."""
 
-    agent_data: Optional[AgentDataDict]
-    """Agent-specific data including tool use trajectory and intermediate responses for more complex interactions."""
+    agent_data: Optional[AgentData]
+    """This field is experimental and may change in future versions. Agent-specific data including tool declarations, agent developer instructions and intermediate events for more complex interactions."""
 
 
 ResponseCandidateOrDict = Union[ResponseCandidate, ResponseCandidateDict]
@@ -10167,6 +10178,43 @@ class EventDict(TypedDict, total=False):
 EventOrDict = Union[Event, EventDict]
 
 
+class Message(_common.BaseModel):
+    """Represents a single message turn in a conversation."""
+
+    turn_id: Optional[str] = Field(
+        default=None, description="""Unique identifier for the message turn."""
+    )
+    content: Optional[genai_types.Content] = Field(
+        default=None, description="""Content of the message, including function call."""
+    )
+    creation_timestamp: Optional[datetime.datetime] = Field(
+        default=None,
+        description="""Timestamp indicating when the message was created.""",
+    )
+    author: Optional[str] = Field(
+        default=None, description="""Name of the entity that produced the message."""
+    )
+
+
+class MessageDict(TypedDict, total=False):
+    """Represents a single message turn in a conversation."""
+
+    turn_id: Optional[str]
+    """Unique identifier for the message turn."""
+
+    content: Optional[genai_types.ContentDict]
+    """Content of the message, including function call."""
+
+    creation_timestamp: Optional[datetime.datetime]
+    """Timestamp indicating when the message was created."""
+
+    author: Optional[str]
+    """Name of the entity that produced the message."""
+
+
+MessageOrDict = Union[Message, MessageDict]
+
+
 class EvalCase(_common.BaseModel):
     """A comprehensive representation of a GenAI interaction for evaluation."""
 
@@ -10197,11 +10245,11 @@ class EvalCase(_common.BaseModel):
     )
     intermediate_events: Optional[list[Event]] = Field(
         default=None,
-        description="""Intermediate events of a single turn in agent eval or intermediate events of the last turn for multi-turn agent eval.""",
+        description="""This field is experimental and may change in future versions. Intermediate events of a single turn in agent eval or intermediate events of the last turn for multi-turn agent eval.""",
     )
-    agent_metadata: Optional[dict[str, AgentMetadata]] = Field(
+    agent_info: Optional[AgentInfo] = Field(
         default=None,
-        description="""Agent metadata for agent eval, keyed by agent name. This can be extended for multi-agent evaluation.""",
+        description="""This field is experimental and may change in future versions. The agent info of all agents in the evaluation case, keyed by agent name. This can be extended for multi-agent evaluation.""",
     )
     # Allow extra fields to support custom metric prompts and stay backward compatible.
     model_config = ConfigDict(frozen=True, extra="allow")
@@ -10232,10 +10280,10 @@ class EvalCaseDict(TypedDict, total=False):
     """Unique identifier for the evaluation case."""
 
     intermediate_events: Optional[list[EventDict]]
-    """Intermediate events of a single turn in agent eval or intermediate events of the last turn for multi-turn agent eval."""
+    """This field is experimental and may change in future versions. Intermediate events of a single turn in agent eval or intermediate events of the last turn for multi-turn agent eval."""
 
-    agent_metadata: Optional[dict[str, AgentMetadataDict]]
-    """Agent metadata for agent eval, keyed by agent name. This can be extended for multi-agent evaluation."""
+    agent_info: Optional[AgentInfoDict]
+    """This field is experimental and may change in future versions. The agent info of all agents in the evaluation case, keyed by agent name. This can be extended for multi-agent evaluation."""
 
 
 EvalCaseOrDict = Union[EvalCase, EvalCaseDict]
@@ -10564,6 +10612,10 @@ class EvaluationResult(_common.BaseModel):
     metadata: Optional[EvaluationRunMetadata] = Field(
         default=None, description="""Metadata for the evaluation run."""
     )
+    agent_info: Optional[dict[str, AgentInfo]] = Field(
+        default=None,
+        description="""This field is experimental and may change in future versions. Agent metadata for agent eval, keyed by agent name. This can be extended for multi-agent evaluation.""",
+    )
 
     def show(self, candidate_names: Optional[List[str]] = None) -> None:
         """Shows the evaluation result.
@@ -10600,8 +10652,39 @@ class EvaluationResultDict(TypedDict, total=False):
     metadata: Optional[EvaluationRunMetadataDict]
     """Metadata for the evaluation run."""
 
+    agent_info: Optional[dict[str, AgentInfoDict]]
+    """This field is experimental and may change in future versions. Agent metadata for agent eval, keyed by agent name. This can be extended for multi-agent evaluation."""
+
 
 EvaluationResultOrDict = Union[EvaluationResult, EvaluationResultDict]
+
+
+class SessionInput(_common.BaseModel):
+    """This field is experimental and may change in future versions.
+
+    Input to initialize a session and run an agent, used for agent eval.
+    """
+
+    user_id: Optional[str] = Field(default=None, description="""The user id.""")
+    state: Optional[dict[str, str]] = Field(
+        default=None, description="""The state of the session."""
+    )
+
+
+class SessionInputDict(TypedDict, total=False):
+    """This field is experimental and may change in future versions.
+
+    Input to initialize a session and run an agent, used for agent eval.
+    """
+
+    user_id: Optional[str]
+    """The user id."""
+
+    state: Optional[dict[str, str]]
+    """The state of the session."""
+
+
+SessionInputOrDict = Union[SessionInput, SessionInputDict]
 
 
 class WinRateStats(_common.BaseModel):
