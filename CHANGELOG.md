@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.120.0](https://github.com/googleapis/python-aiplatform/compare/v1.119.0...v1.120.0) (2025-10-05)
+
+
+### Features
+
+* Expose PSC for CustomModel ([d02099c](https://github.com/googleapis/python-aiplatform/commit/d02099cf200f7e372ad0c38f98a5b8c92bcc581c))
+* Migrate vertex_ai_session_service to use Agent Engine SDK ([55b54a2](https://github.com/googleapis/python-aiplatform/commit/55b54a21005587338abdd66c7605f534294b0c94))
+* Migrate vertex_ai_session_service to use Agent Engine SDK ([03772e2](https://github.com/googleapis/python-aiplatform/commit/03772e2a87f2fc6c66a69220e004522cc6ba1f94))
+
 ## [1.119.0](https://github.com/googleapis/python-aiplatform/compare/v1.118.0...v1.119.0) (2025-10-03)
 
 
