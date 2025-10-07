@@ -39,6 +39,8 @@ import tensorflow as tf
 from google.protobuf import timestamp_pb2 as timestamp
 from tensorboard.util import tb_logging
 
+_BLOB_PATTERN = re.compile(r"gs:\/\/.*?\/(.*)")
+
 
 TensorboardServiceClient = tensorboard_service_client.TensorboardServiceClient
 
@@ -573,7 +575,7 @@ def _get_blob_from_file(fp: str) -> Optional[str]:
         blob_name (str):
             Optional. Base blob file name if it exists, else None
     """
-    m = re.match(r"gs:\/\/.*?\/(.*)", fp)
+    m = _BLOB_PATTERN.match(fp)
     if not m:
         logger.warning("Could not get the blob name from file %s", fp)
         return None
