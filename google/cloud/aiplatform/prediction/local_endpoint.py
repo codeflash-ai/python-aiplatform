@@ -232,21 +232,30 @@ class LocalEndpoint:
             return
 
         try:
+            # Cache project_id and envs only if needed for performance
+            project_id = None
+            envs = None
             try:
                 project_id = initializer.global_config.project
                 _logger.info(
                     f"Got the project id from the global config: {project_id}."
                 )
             except (GoogleAuthError, ValueError):
-                project_id = None
+                pass
 
-            envs = (
-                dict(self.serving_container_environment_variables)
-                if self.serving_container_environment_variables is not None
-                else {}
-            )
-            if project_id is not None:
-                envs[_GCLOUD_PROJECT_ENV] = project_id
+            if (
+                self.serving_container_environment_variables is not None
+                or project_id is not None
+            ):
+                # Combine env construction and project addition in one pass for minimal copying
+                if self.serving_container_environment_variables is not None:
+                    envs = dict(self.serving_container_environment_variables)
+                else:
+                    envs = {}
+                if project_id is not None:
+                    envs[_GCLOUD_PROJECT_ENV] = project_id
+            else:
+                envs = {}
 
             self.container = run.run_prediction_container(
                 self.serving_container_image_uri,
@@ -267,10 +276,12 @@ class LocalEndpoint:
             # Retrieves the assigned host port.
             self._wait_until_container_runs()
             if self.host_port is None:
-                self.container.reload()
-                self.assigned_host_port = self.container.ports[
-                    f"{self.container_port}/tcp"
-                ][0]["HostPort"]
+                # Minimize reload and dictionary lookups for performance
+                container_ports = self.container.ports
+                assigned_ports = container_ports.get(f"{self.container_port}/tcp")
+                if assigned_ports is not None:
+                    self.container.reload()
+                    self.assigned_host_port = assigned_ports[0]["HostPort"]
             self.container_is_running = True
             # Waits until the model server starts.
             self._wait_until_health_check_succeeds()
