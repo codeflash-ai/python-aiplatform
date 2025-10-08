@@ -17,8 +17,6 @@
 
 """A basic webserver for hosting plugin routes."""
 
-import os
-
 from google.cloud.aiplatform.training_utils.cloud_profiler import wsgi_types
 from google.cloud.aiplatform.training_utils.cloud_profiler.plugins import (
     base_plugin,
@@ -46,8 +44,12 @@ class WebServer:
         self._plugins = plugins
         self._routes = {}
 
-        # Routes are in form {plugin_name}/{route}
+        # Cache for not found responses (single static 404 response instance)
+        self._not_found_response = wrappers.Response("Not Found", status=404)
+
+        # Precompute all route paths via concatenation instead of os.path.join (os.path.join is overkill)
         for plugin in self._plugins:
+            plugin_route_prefix = "/" + plugin.PLUGIN_NAME
             for route, handler in plugin.get_routes().items():
                 if not route.startswith("/"):
                     raise ValueError(
@@ -55,10 +57,8 @@ class WebServer:
                         "invalid route for plugin %s, route %s"
                         % (plugin.PLUGIN_NAME, route)
                     )
-
-                app_route = os.path.join("/", plugin.PLUGIN_NAME)
-
-                app_route += route
+                # Direct string concatenation instead of os.path.join for speed
+                app_route = f"{plugin_route_prefix}{route}"
                 self._routes[app_route] = handler
 
     def dispatch_request(
@@ -75,14 +75,16 @@ class WebServer:
         Returns:
             A response iterable.
         """
-        # Check for existince of route
-        request = wrappers.Request(environ)
+        # Optimize request parsing by extracting path without constructing full Request object unless needed
+        # Werkzeug's environ['PATH_INFO'] is guaranteed to be present per WSGI spec.
+        # This avoids instantiating wrappers.Request unless necessary.
+        path_info = environ.get("PATH_INFO")
+        handler = self._routes.get(path_info)
+        if handler is not None:
+            return handler(environ, start_response)
 
-        if request.path in self._routes:
-            return self._routes[request.path](environ, start_response)
-
-        response = wrappers.Response("Not Found", status=404)
-        return response(environ, start_response)
+        # Use cached static 404 response
+        return self._not_found_response(environ, start_response)
 
     def wsgi_app(
         self, environ: wsgi_types.Environment, start_response: wsgi_types.StartResponse
