@@ -468,30 +468,31 @@ class _Config:
                 { "api_endpoint": "asia-east1-aiplatform.googleapis.com" }
         """
 
-        api_endpoint = self.api_endpoint
+        api_endpoint = self._api_endpoint
+        project = self._project
+        location = self._location
 
+        # Early exit for global or unset conditions
         if (
             api_endpoint is None
-            and not self._project
-            and not self._location
+            and not project
+            and not location
             and not location_override
-        ) or (self._location == "global"):
+        ) or (location == "global"):
             # Default endpoint is location invariant if using API key or global
             # location.
             api_endpoint = "aiplatform.googleapis.com"
 
         # If both project and API key are passed in, project takes precedence.
         if api_endpoint is None:
-            # Form the default endpoint to use with no API key.
-            if not (self.location or location_override):
+            region = location_override or location
+            if not region:
                 raise ValueError(
                     "No location found. Provide or initialize SDK with a location."
                 )
 
-            region = location_override or self.location
-            region = region.lower()
-
-            utils.validate_region(region)
+            region_lc = region.lower()
+            utils.validate_region(region_lc)
 
             service_base_path = api_base_path_override or (
                 constants.PREDICTION_API_BASE_PATH
@@ -500,13 +501,13 @@ class _Config:
             )
 
             api_endpoint = (
-                f"{region}-{service_base_path}"
+                f"{region_lc}-{service_base_path}"
                 if not api_path_override
                 else api_path_override
             )
 
         # Project/location take precedence over api_key
-        if api_key and not self._project:
+        if api_key and not project:
             return client_options.ClientOptions(
                 api_endpoint=api_endpoint, api_key=api_key
             )

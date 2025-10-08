@@ -105,6 +105,8 @@ from google.cloud.aiplatform.compat.types import (
     reservation_affinity_v1 as gca_reservation_affinity_v1,
 )
 
+_SUPPORTED_REGIONS_SET = set(map(str.lower, constants.SUPPORTED_REGIONS))
+
 VertexAiServiceClient = TypeVar(
     "VertexAiServiceClient",
     # v1beta1
@@ -314,8 +316,8 @@ def validate_region(region: str) -> bool:
             f"Please provide a region, select from {constants.SUPPORTED_REGIONS}"
         )
 
-    region = region.lower()
-    if region not in constants.SUPPORTED_REGIONS:
+    region_lc = region.lower()
+    if region_lc not in _SUPPORTED_REGIONS_SET:
         raise ValueError(
             f"Unsupported region for Vertex AI, select from {constants.SUPPORTED_REGIONS}"
         )
