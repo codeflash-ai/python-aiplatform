@@ -71,23 +71,27 @@ def get_experiments_compare_url(experiment_names: Sequence[str]) -> str:
     if len(experiment_names) < 2:
         raise ValueError("At least two experiment_names are required.")
 
-    locations = {
-        _parse_experiment_name(experiment_name)["location"]
-        for experiment_name in experiment_names
-    }
+    # Single-pass parse: gather both name segments and locations up front to reduce duplicate parsing.
+    name_segments_list = []
+    locations = set()
+    append = name_segments_list.append  # Localize method for slight perf win in loop
+
+    for experiment_name in experiment_names:
+        segments = _parse_experiment_name(experiment_name)
+        append(segments)
+        locations.add(segments["location"])
+
     if len(locations) != 1:
         raise ValueError(
             f"Got experiments from different locations: {', '.join(locations)}."
         )
-    location = locations.pop()
+    # locations only has one item
+    location = next(iter(locations))
 
-    experiment_url_segments = []
-    for idx, experiment_name in enumerate(experiment_names):
-        name_segments = _parse_experiment_name(experiment_name)
-        experiment_url_segments.append(
-            "{cnt}-{experiment}:{project}+{location}+{tensorboard}+{experiment}".format(
-                cnt=idx + 1, **name_segments
-            )
-        )
+    # Use list comprehension for efficiency and direct string formatting
+    experiment_url_segments = [
+        f"{idx + 1}-{seg['experiment']}:{seg['project']}+{seg['location']}+{seg['tensorboard']}+{seg['experiment']}"
+        for idx, seg in enumerate(name_segments_list)
+    ]
     encoded_names = ",".join(experiment_url_segments)
     return f"https://{location}.{_SERVING_DOMAIN}/compare/{encoded_names}"
