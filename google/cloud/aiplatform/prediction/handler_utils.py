@@ -43,7 +43,10 @@ def _remove_parameter(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
 
-    return value.split(";")[0]
+    idx = value.find(";")
+    if idx == -1:
+        return value
+    return value[:idx]
 
 
 def get_content_type_from_headers(
@@ -59,8 +62,9 @@ def get_content_type_from_headers(
         The content type or None.
     """
     if headers is not None:
+        matcher = prediction.CONTENT_TYPE_HEADER_REGEX.match
         for key, value in headers.items():
-            if prediction.CONTENT_TYPE_HEADER_REGEX.match(key):
+            if matcher(key):
                 return _remove_parameter(value)
 
     return None
