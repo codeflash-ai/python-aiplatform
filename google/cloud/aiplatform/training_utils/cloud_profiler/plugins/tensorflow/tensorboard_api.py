@@ -36,6 +36,8 @@ from google.cloud.aiplatform.utils import TensorboardClientWithOverride
 
 from tensorboard.util import tb_logging
 
+_TENSORBOARD_PATTERN = re.compile("projects/(.*)/locations/.*/tensorboards/.*")
+
 
 logger = tb_logging.get_logger()
 
@@ -66,8 +68,7 @@ def _get_project_id() -> str:
     Raises:
         ValueError: Cannot parse the tensorboard resource name.
     """
-    m = re.match(
-        "projects/(.*)/locations/.*/tensorboards/.*",
+    m = _TENSORBOARD_PATTERN.match(
         training_utils.environment_variables.tensorboard_resource_name,
     )
     if not m:
