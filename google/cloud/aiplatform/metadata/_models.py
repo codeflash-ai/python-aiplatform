@@ -874,9 +874,8 @@ def get_experiment_model_info(
         "framework_version": model.framework_version,
     }
 
-    # try to get input example if exists
-    input_example = None
     source_file = f"{model.uri}/instance.yaml"
+    input_example = None
     with tempfile.TemporaryDirectory() as temp_dir:
         destination_file = os.path.join(temp_dir, "instance.yaml")
         try:
@@ -892,7 +891,9 @@ def get_experiment_model_info(
                 ) from None
 
             with open(destination_file, "r") as f:
-                input_example = yaml.safe_load(f)["input_example"]
+                # Use get to avoid KeyError and avoid unnecessary exceptions
+                yaml_dict = yaml.safe_load(f)
+                input_example = yaml_dict.get("input_example")
 
     if input_example:
         model_info["input_example"] = input_example
