@@ -18,6 +18,11 @@ from typing import Sequence, Dict
 from google.cloud.aiplatform_v1beta1.services.tensorboard_service.client import (
     TensorboardServiceClient,
 )
+import re
+
+_TBOARD_EXPERIMENT_RE = re.compile(
+    r"^projects/(?P<project>.+?)/locations/(?P<location>.+?)/tensorboards/(?P<tensorboard>.+?)/experiments/(?P<experiment>.+?)$"
+)
 
 _SERVING_DOMAIN = "tensorboard.googleusercontent.com"
 
@@ -53,7 +58,11 @@ def get_experiment_url(experiment_name: str) -> str:
     Returns:
       URL for the tensorboard web app.
     """
-    location = _parse_experiment_name(experiment_name)["location"]
+    # Fast path: retrieve location and form the URL directly for the given pattern.
+    match = _TBOARD_EXPERIMENT_RE.match(experiment_name)
+    if not match:
+        raise ValueError(f"Invalid experiment name: {experiment_name}.")
+    location = match.group("location")
     name_for_url = experiment_name.replace("/", "+")
     return f"https://{location}.{_SERVING_DOMAIN}/experiment/{name_for_url}"
 
