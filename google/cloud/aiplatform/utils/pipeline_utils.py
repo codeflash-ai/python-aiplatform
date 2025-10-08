@@ -69,6 +69,11 @@ class PipelineRuntimeConfigBuilder(object):
         self._failure_policy = failure_policy
         self._default_runtime = default_runtime
 
+        # Cache the version comparison to avoid repeated parsing
+        self._is_legacy_schema = packaging.version.parse(
+            self._schema_version
+        ) <= packaging.version.parse("2.0.0")
+
     @classmethod
     def from_job_spec_json(
         cls,
@@ -243,9 +248,7 @@ class PipelineRuntimeConfigBuilder(object):
                 "pipeline job input definitions.".format(name)
             )
 
-        if packaging.version.parse(self._schema_version) <= packaging.version.parse(
-            "2.0.0"
-        ):
+        if self._is_legacy_schema:
             result = {}
             if self._parameter_types[name] == "INT":
                 result["intValue"] = value
