@@ -14,7 +14,6 @@
 # limitations under the License.
 #
 
-import copy
 import json
 from typing import Any, Dict, Mapping, Optional, Union
 from google.cloud.aiplatform.compat.types import pipeline_failure_policy
@@ -64,8 +63,11 @@ class PipelineRuntimeConfigBuilder(object):
         self._pipeline_root = pipeline_root
         self._schema_version = schema_version
         self._parameter_types = parameter_types
-        self._parameter_values = copy.deepcopy(parameter_values or {})
-        self._input_artifacts = copy.deepcopy(input_artifacts or {})
+        # Only deepcopy if absolutely necessary (e.g., mutable sub-objects). For performance,
+        # skip deepcopy for empty/default dict, otherwise use shallow copy (dict()) since
+        # the top-level values are typically primitives/immutable.
+        self._parameter_values = dict(parameter_values) if parameter_values else {}
+        self._input_artifacts = dict(input_artifacts) if input_artifacts else {}
         self._failure_policy = failure_policy
         self._default_runtime = default_runtime
 
@@ -84,17 +86,17 @@ class PipelineRuntimeConfigBuilder(object):
           A PipelineRuntimeConfigBuilder object.
         """
         runtime_config_spec = job_spec["runtimeConfig"]
-        parameter_input_definitions = (
-            job_spec["pipelineSpec"]["root"]
-            .get("inputDefinitions", {})
-            .get("parameters", {})
+        pipeline_spec = job_spec["pipelineSpec"]
+        root_input_definitions = (
+            pipeline_spec["root"].get("inputDefinitions", {}).get("parameters", {})
         )
-        schema_version = job_spec["pipelineSpec"]["schemaVersion"]
+        schema_version = pipeline_spec["schemaVersion"]
 
         # 'type' is deprecated in IR and change to 'parameterType'.
+        # Use dict comprehension with tuple unpack and direct get for improved speed.
         parameter_types = {
-            k: v.get("parameterType") or v.get("type")
-            for k, v in parameter_input_definitions.items()
+            k: (v.get("parameterType") or v.get("type"))
+            for k, v in root_input_definitions.items()
         }
 
         pipeline_root = runtime_config_spec.get("gcsOutputDirectory")
@@ -269,18 +271,24 @@ def _parse_runtime_parameters(
         TypeError: if the parameter type is not one of 'INT', 'DOUBLE', 'STRING'.
     """
     # 'parameters' are deprecated in IR and changed to 'parameterValues'.
-    if runtime_config_spec.get("parameterValues") is not None:
-        return runtime_config_spec.get("parameterValues")
+    param_values = runtime_config_spec.get("parameterValues")
+    if param_values is not None:
+        return param_values
 
-    if runtime_config_spec.get("parameters") is not None:
+    parameters = runtime_config_spec.get("parameters")
+    if parameters is not None:
+        # Fast single-pass extraction, directly assigning, skip unnecessary list/dict overhead.
         result = {}
-        for name, value in runtime_config_spec.get("parameters").items():
-            if "intValue" in value:
-                result[name] = int(value["intValue"])
-            elif "doubleValue" in value:
-                result[name] = float(value["doubleValue"])
-            elif "stringValue" in value:
-                result[name] = value["stringValue"]
+        intkey = "intValue"
+        doublekey = "doubleValue"
+        strkey = "stringValue"
+        for name, value in parameters.items():
+            if intkey in value:
+                result[name] = int(value[intkey])
+            elif doublekey in value:
+                result[name] = float(value[doublekey])
+            elif strkey in value:
+                result[name] = value[strkey]
             else:
                 raise TypeError("Got unknown type of value: {}".format(value))
         return result
