@@ -17,8 +17,6 @@
 
 """A basic webserver for hosting plugin routes."""
 
-import os
-
 from google.cloud.aiplatform.training_utils.cloud_profiler import wsgi_types
 from google.cloud.aiplatform.training_utils.cloud_profiler.plugins import (
     base_plugin,
@@ -46,8 +44,10 @@ class WebServer:
         self._plugins = plugins
         self._routes = {}
 
-        # Routes are in form {plugin_name}/{route}
+        # Precompute plugin name prefixes
+        # Avoid repeated os.path.join and string concatenation in the loop
         for plugin in self._plugins:
+            plugin_prefix = "/" + plugin.PLUGIN_NAME
             for route, handler in plugin.get_routes().items():
                 if not route.startswith("/"):
                     raise ValueError(
@@ -55,10 +55,7 @@ class WebServer:
                         "invalid route for plugin %s, route %s"
                         % (plugin.PLUGIN_NAME, route)
                     )
-
-                app_route = os.path.join("/", plugin.PLUGIN_NAME)
-
-                app_route += route
+                app_route = plugin_prefix + route
                 self._routes[app_route] = handler
 
     def dispatch_request(
@@ -98,8 +95,20 @@ class WebServer:
         Returns:
             A response iterable.
         """
-        response = self.dispatch_request(environ, start_response)
-        return response
+
+        # Directly reuse _routes for dispatching as in the reference webserver.py
+        # and avoid an extra layer of function call when invoking the route handler.
+        # Get the path from the WSGI request, avoiding creation of a Request object unless route exists.
+        path_info = environ.get("PATH_INFO", "")
+        handler = self._routes.get(path_info)
+        if handler is not None:
+            return handler(environ, start_response)
+
+        # If not found, use Werkzeug's Response as per base webserver.py.
+        from werkzeug import wrappers
+
+        response = wrappers.Response("Not Found", status=404)
+        return response(environ, start_response)
 
     def __call__(self, environ, start_response):
         """Entrypoint for wsgi application.
