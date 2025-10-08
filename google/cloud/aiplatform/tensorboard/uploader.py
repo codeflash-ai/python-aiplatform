@@ -1391,11 +1391,9 @@ def _varint_cost(n: int):
     Returns:
       An integer number of bytes.
     """
-    result = 1
-    while n >= 128:
-        result += 1
-        n >>= 7
-    return result
+    if n < 128:
+        return 1
+    return (n.bit_length() + 6) // 7
 
 
 def _prune_empty_time_series(
