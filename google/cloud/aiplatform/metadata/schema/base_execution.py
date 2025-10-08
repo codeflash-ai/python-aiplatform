@@ -86,8 +86,7 @@ class BaseExecutionSchema(execution.Execution):
             schema_version or constants._DEFAULT_SCHEMA_VERSION
         )
         # If metadata is None covert to {}
-        metadata = metadata if metadata else {}
-        self._nested_update_metadata(self._gca_resource, metadata)
+        self._nested_update_metadata(self._gca_resource, metadata if metadata else {})
         self._gca_resource.description = description
 
     # TODO() Switch to @singledispatchmethod constructor overload after py>=3.8
@@ -138,16 +137,12 @@ class BaseExecutionSchema(execution.Execution):
             Execution: Instantiated representation of the managed Metadata Execution.
 
         """
-        # Add User Agent Header for metrics tracking if one is not specified
-        # If one is already specified this call was initiated by a sub class.
         base_constants.USER_AGENT_SDK_COMMAND = (
             "aiplatform.metadata.schema.base_execution.BaseExecutionSchema.create"
         )
 
         # Check if metadata exists to avoid proto read error
-        metadata = None
-        if self._gca_resource.metadata:
-            metadata = self.metadata
+        metadata = self.metadata if self._gca_resource.metadata else None
 
         new_execution_instance = execution.Execution.create(
             resource_id=self.execution_id,
@@ -162,7 +157,6 @@ class BaseExecutionSchema(execution.Execution):
             location=location,
             credentials=credentials,
         )
-        # Reinstantiate this class using the newly created resource.
         self._init_with_resource_name(
             execution_name=new_execution_instance.resource_name
         )
