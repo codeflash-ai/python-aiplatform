@@ -46,6 +46,12 @@ from google.cloud.aiplatform.compat.types import (
     encryption_spec_v1beta1 as gca_encryption_spec_v1beta1,
 )
 
+_PRODUCT_MAPPING = {
+    "COLAB_ENTERPRISE": None,
+    "WORKBENCH_CUSTOM_CONTAINER": None,
+    "WORKBENCH_INSTANCE": None,
+}
+
 try:
     import google.auth.aio
 
@@ -431,11 +437,13 @@ class _Config:
             return self._resource_type
 
         vertex_product = os.getenv("VERTEX_PRODUCT")
-        product_mapping = {
-            "COLAB_ENTERPRISE": _Product.COLAB_ENTERPRISE,
-            "WORKBENCH_CUSTOM_CONTAINER": _Product.WORKBENCH_CUSTOM_CONTAINER,
-            "WORKBENCH_INSTANCE": _Product.WORKBENCH_INSTANCE,
-        }
+        product_mapping = _PRODUCT_MAPPING
+        if product_mapping["COLAB_ENTERPRISE"] is None:
+            product_mapping["COLAB_ENTERPRISE"] = _Product.COLAB_ENTERPRISE
+            product_mapping["WORKBENCH_CUSTOM_CONTAINER"] = (
+                _Product.WORKBENCH_CUSTOM_CONTAINER
+            )
+            product_mapping["WORKBENCH_INSTANCE"] = _Product.WORKBENCH_INSTANCE
 
         if vertex_product in product_mapping:
             self._resource_type = product_mapping[vertex_product]
