@@ -93,6 +93,10 @@ from .transports.grpc import TensorboardServiceGrpcTransport
 from .transports.grpc_asyncio import TensorboardServiceGrpcAsyncIOTransport
 from .transports.rest import TensorboardServiceRestTransport
 
+_TENSORBOARD_EXPERIMENT_PATH_RE = re.compile(
+    r"^projects/(?P<project>.+?)/locations/(?P<location>.+?)/tensorboards/(?P<tensorboard>.+?)/experiments/(?P<experiment>.+?)$"
+)
+
 try:
     from .transports.rest_asyncio import AsyncTensorboardServiceRestTransport
 
@@ -276,10 +280,7 @@ class TensorboardServiceClient(metaclass=TensorboardServiceClientMeta):
     @staticmethod
     def parse_tensorboard_experiment_path(path: str) -> Dict[str, str]:
         """Parses a tensorboard_experiment path into its component segments."""
-        m = re.match(
-            r"^projects/(?P<project>.+?)/locations/(?P<location>.+?)/tensorboards/(?P<tensorboard>.+?)/experiments/(?P<experiment>.+?)$",
-            path,
-        )
+        m = _TENSORBOARD_EXPERIMENT_PATH_RE.match(path)
         return m.groupdict() if m else {}
 
     @staticmethod
