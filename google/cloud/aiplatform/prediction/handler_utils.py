@@ -43,7 +43,7 @@ def _remove_parameter(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
 
-    return value.split(";")[0]
+    return value.partition(";")[0]
 
 
 def get_content_type_from_headers(
