@@ -693,10 +693,17 @@ class _FunctionWrapperThatAddsDefaultMetadata:
 
     def __call__(self, *args, **kwargs):
         # Start with default metadata (copy it)
-        metadata_list = list(global_config._request_metadata or [])
-        # Add per-request metadata (overrides defaults)
-        # The "metadata" argument is removed from "kwargs"
-        metadata_list.extend(kwargs.pop("metadata", []))
+        default_metadata = global_config._request_metadata
+        # Use a branch to avoid unnecessary list() creation when there is no per-request metadata
+        if "metadata" in kwargs:
+            metadata_list = (
+                list(default_metadata) if default_metadata is not None else []
+            )
+            metadata_list.extend(kwargs.pop("metadata"))
+        else:
+            metadata_list = (
+                list(default_metadata) if default_metadata is not None else []
+            )
         # Call the wrapped function with extra metadata
         return self._func(*args, **kwargs, metadata=metadata_list)
 
