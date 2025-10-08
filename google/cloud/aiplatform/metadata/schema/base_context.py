@@ -79,8 +79,8 @@ class BaseContextSchema(context.Context):
         self._gca_resource.schema_version = (
             schema_version or constants._DEFAULT_SCHEMA_VERSION
         )
-        # If metadata is None covert to {}
-        metadata = metadata if metadata else {}
+        # If metadata is None convert to {}
+        metadata = metadata or {}
         self._nested_update_metadata(self._gca_resource, metadata)
         self._gca_resource.description = description
 
@@ -138,9 +138,7 @@ class BaseContextSchema(context.Context):
         )
 
         # Check if metadata exists to avoid proto read error
-        metadata = None
-        if self._gca_resource.metadata:
-            metadata = self.metadata
+        metadata = self.metadata if self._gca_resource.metadata else None
 
         new_context = context.Context.create(
             resource_id=self.context_id,
