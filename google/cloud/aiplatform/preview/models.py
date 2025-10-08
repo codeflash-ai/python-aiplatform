@@ -551,30 +551,40 @@ class RolloutOptions(object):
 
     def to_gapic(self) -> gca_endpoint_compat.RolloutOptions:
         """Converts RolloutOptions class to gapic RolloutOptions proto."""
-        result = gca_endpoint_compat.RolloutOptions(
-            previous_deployed_model=str(self.previous_deployed_model),
-        )
-        if self.max_surge_percentage:
-            if self.max_surge_replicas:
+
+        # Gather all options to initialize RolloutOptions in one go for lower attribute assignment overhead
+        kwargs = {"previous_deployed_model": str(self.previous_deployed_model)}
+
+        # Compute surge fields first
+        surge_percentage = self.max_surge_percentage
+        surge_replicas = self.max_surge_replicas
+        if surge_percentage is not None and surge_percentage:
+            if surge_replicas is not None and surge_replicas:
                 raise ValueError(
-                    "max_surge_percentage and max_surge_replicas cannot both be" " set."
+                    "max_surge_percentage and max_surge_replicas cannot both be set."
                 )
-            result.max_surge_percentage = self.max_surge_percentage
-        elif self.max_surge_replicas:
-            result.max_surge_replicas = self.max_surge_replicas
+            kwargs["max_surge_percentage"] = surge_percentage
+        elif surge_replicas is not None and surge_replicas:
+            kwargs["max_surge_replicas"] = surge_replicas
         else:
-            result.max_surge_replicas = 0
-        if self.max_unavailable_percentage:
-            if self.max_unavailable_replicas:
+            kwargs["max_surge_replicas"] = 0
+
+        unavailable_percentage = self.max_unavailable_percentage
+        unavailable_replicas = self.max_unavailable_replicas
+        if unavailable_percentage is not None and unavailable_percentage:
+            if unavailable_replicas is not None and unavailable_replicas:
                 raise ValueError(
                     "max_unavailable_percentage and max_unavailable_replicas"
                     " cannot both be set."
                 )
-            result.max_unavailable_percentage = self.max_unavailable_percentage
-        elif self.max_unavailable_replicas:
-            result.max_unavailable_replicas = self.max_unavailable_replicas
+            kwargs["max_unavailable_percentage"] = unavailable_percentage
+        elif unavailable_replicas is not None and unavailable_replicas:
+            kwargs["max_unavailable_replicas"] = unavailable_replicas
         else:
-            result.max_unavailable_replicas = 0
+            kwargs["max_unavailable_replicas"] = 0
+
+        # Instantiate the result with kwargs for fewer assignments and faster execution
+        result = gca_endpoint_compat.RolloutOptions(**kwargs)
 
         return result
 
