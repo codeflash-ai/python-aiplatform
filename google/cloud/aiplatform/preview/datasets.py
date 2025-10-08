@@ -239,30 +239,19 @@ def construct_single_turn_template(
     Returns:
         A GeminiTemplateConfig object.
     """
-    contents = []
-    contents.append(
-        generative_models.Content(
-            role="user",
-            parts=[
-                generative_models.Part.from_text(prompt),
-            ],
-        )
-    )
+    Content = generative_models.Content
+    Part_from_text = generative_models.Part.from_text
+
+    contents = [Content(role="user", parts=[Part_from_text(prompt)])]
     if response:
         contents.append(
-            generative_models.Content(
+            Content(
                 role="model",
-                parts=[
-                    generative_models.Part.from_text(response),
-                ],
+                parts=[Part_from_text(response)],
             )
         )
     if system_instruction:
-        system_instruction = generative_models.Content(
-            parts=[
-                generative_models.Part.from_text(system_instruction),
-            ],
-        )
+        system_instruction = Content(parts=[Part_from_text(system_instruction)])
 
     # Set up GeminiExample.
     gemini_example = GeminiExample(
