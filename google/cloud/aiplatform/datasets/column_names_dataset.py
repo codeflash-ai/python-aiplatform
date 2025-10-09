@@ -187,19 +187,18 @@ class _ColumnNamesDataset(datasets._Dataset):
                 A set of columns names in the BigQuery table.
         """
 
-        ancestor_names = {
-            nested_field_name
-            for field in schema_field.fields
-            for nested_field_name in _ColumnNamesDataset._get_bq_schema_field_names_recursively(
-                field
-            )
-        }
-
-        # Only return "leaf nodes", basically any field that doesn't have children
-        if len(ancestor_names) == 0:
+        # Avoid set comprehension with recursive calls inside, which costs memory and setup;
+        # Instead, accumulate results with a single set instance for better efficiency.
+        if not schema_field.fields:  # Directly test for leaf to avoid overhead
             return {schema_field.name}
-        else:
-            return {f"{schema_field.name}.{name}" for name in ancestor_names}
+        result = set()
+        name_prefix = schema_field.name
+        for field in schema_field.fields:
+            for (
+                nested_name
+            ) in _ColumnNamesDataset._get_bq_schema_field_names_recursively(field):
+                result.add(f"{name_prefix}.{nested_name}")
+        return result
 
     @staticmethod
     def _retrieve_bq_source_columns(
