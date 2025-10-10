@@ -19,6 +19,11 @@ import re
 from typing import Optional, Dict, List
 from dataclasses import dataclass
 
+_RESOURCE_NAME_REGEX = re.compile(
+    r"^projects/(?P<project>[\w-]+)/locations/(?P<location>[\w-]+)"
+    r"(?:/metadataStores/(?P<store>[\w-]+))?/[\w-]+/(?P<id>[\w-]+)(?P<version>@[\w-]+)?$"
+)
+
 
 @dataclass
 class PredictSchemata:
@@ -349,10 +354,7 @@ def create_uri_from_resource_name(resource_name: str) -> str:
         ValueError: If resource_name does not match the specified format.
     """
     # TODO: support nested resource names such as models/123/evaluations/456
-    match_results = re.match(
-        r"^projects\/(?P<project>[\w-]+)\/locations\/(?P<location>[\w-]+)(\/metadataStores\/(?P<store>[\w-]+))?\/[\w-]+\/(?P<id>[\w-]+)(?P<version>@[\w-]+)?$",
-        resource_name,
-    )
+    match_results = _RESOURCE_NAME_REGEX.match(resource_name)
     if not match_results:
         raise ValueError(f"Invalid resource_name format for {resource_name}.")
 
