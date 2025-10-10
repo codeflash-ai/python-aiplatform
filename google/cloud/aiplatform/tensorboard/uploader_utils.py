@@ -40,6 +40,8 @@ import grpc
 
 from tensorboard.util import tb_logging
 
+_GS_BUCKET_REGEX = re.compile(r"gs:\/\/(.*?)(?=\/|$)")
+
 TensorboardServiceClient = tensorboard_service_client.TensorboardServiceClient
 DEFAULT_RUN_NAME = "default"
 DEFAULT_PROFILE_RUN_NAME = "profile"
@@ -461,10 +463,15 @@ def get_source_bucket(logdir: str) -> Optional[storage.Bucket]:
         bucket (Optional[storage.Bucket]):
             A bucket if the path is a gs bucket, None otherwise.
     """
-    m = re.match(r"gs:\/\/(.*?)(?=\/|$)", logdir)
+    m = _GS_BUCKET_REGEX.match(logdir)
     if not m:
         return None
-    bucket = storage.Client().bucket(m[1])
+    # Avoid creating a new storage.Client on every call;
+    # Use a module-level singleton client for efficiency.
+    # This avoids repeated auth/local computations.
+    if not hasattr(get_source_bucket, "_storage_client"):
+        get_source_bucket._storage_client = storage.Client()
+    bucket = get_source_bucket._storage_client.bucket(m[1])
     return bucket
 
 
