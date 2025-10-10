@@ -144,24 +144,38 @@ class _EndpointLitModel(lit_model.Model):
         Returns:
             A list of predictions based on the output spec.
         """
-        instances = []
-        for input in inputs:
-            instance = [input[feature] for feature in self._input_types]
-            instances.append(instance)
-        if self._explanation_enabled:
-            prediction_object = self._endpoint.explain(instances)
+        input_types_keys = list(self._input_types)
+        output_types_keys = list(self._output_types)
+        # Use list comprehension for batch conversion for better performance
+        instances = [
+            [input[feature] for feature in input_types_keys] for input in inputs
+        ]
+
+        explanation_enabled = self._explanation_enabled
+        endpoint = self._endpoint
+
+        if explanation_enabled:
+            prediction_object = endpoint.explain(instances)
         else:
-            prediction_object = self._endpoint.predict(instances)
-        outputs = []
-        for prediction in prediction_object.predictions:
-            if isinstance(prediction, Mapping):
-                outputs.append({key: prediction[key] for key in self._output_types})
-            else:
-                outputs.append(
-                    {key: prediction[i] for i, key in enumerate(self._output_types)}
-                )
-        if self._explanation_enabled:
-            for i, explanation in enumerate(prediction_object.explanations):
+            prediction_object = endpoint.predict(instances)
+
+        predictions = prediction_object.predictions
+
+        # Fast-path: collect all Mapping results in batch, else fall back to enumerate for mixed types
+        if predictions and isinstance(predictions[0], Mapping):
+            outputs = [
+                {key: prediction[key] for key in output_types_keys}
+                for prediction in predictions
+            ]
+        else:
+            outputs = [
+                {key: prediction[i] for i, key in enumerate(output_types_keys)}
+                for prediction in predictions
+            ]
+
+        if explanation_enabled:
+            explanations = prediction_object.explanations
+            for i, explanation in enumerate(explanations):
                 attributions = explanation.attributions
                 outputs[i]["feature_attribution"] = lit_dtypes.FeatureSalience(
                     attributions
