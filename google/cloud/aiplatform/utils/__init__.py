@@ -720,12 +720,7 @@ class FeatureRegistryClientWithOverride(ClientWithOverride):
         feature_group: str,
         feature: str,
     ) -> str:
-        return "projects/{project}/locations/{location}/featureGroups/{feature_group}/features/{feature}".format(
-            project=project,
-            location=location,
-            feature_group=feature_group,
-            feature=feature,
-        )
+        return f"projects/{project}/locations/{location}/featureGroups/{feature_group}/features/{feature}"
 
     @staticmethod
     def parse_feature_path(path: str) -> Dict[str, str]:
