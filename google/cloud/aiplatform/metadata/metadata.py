@@ -209,10 +209,12 @@ class _LegacyExperimentService:
           Dict of custom properties with keys mapped to column names
         """
         column_key_to_value = {}
+        metadata_type_dot = metadata_type + "."
+
         for key, value in metadata.items():
             if filter_prefix and key.startswith(filter_prefix):
                 key = key[len(filter_prefix) :]
-            column_key_to_value[".".join([metadata_type, key])] = value
+            column_key_to_value[metadata_type_dot + key] = value
 
         return column_key_to_value
 
