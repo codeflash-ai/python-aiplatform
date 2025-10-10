@@ -105,6 +105,10 @@ from google.cloud.aiplatform.compat.types import (
     reservation_affinity_v1 as gca_reservation_affinity_v1,
 )
 
+_FEATURE_PATH_PATTERN = re.compile(
+    r"^projects/(?P<project>.+?)/locations/(?P<location>.+?)/featureGroups/(?P<feature_group>.+?)/features/(?P<feature>.+?)$"
+)
+
 VertexAiServiceClient = TypeVar(
     "VertexAiServiceClient",
     # v1beta1
@@ -730,10 +734,7 @@ class FeatureRegistryClientWithOverride(ClientWithOverride):
     @staticmethod
     def parse_feature_path(path: str) -> Dict[str, str]:
         """Parses a feature path into its component segments."""
-        m = re.match(
-            r"^projects/(?P<project>.+?)/locations/(?P<location>.+?)/featureGroups/(?P<feature_group>.+?)/features/(?P<feature>.+?)$",
-            path,
-        )
+        m = _FEATURE_PATH_PATTERN.match(path)
         return m.groupdict() if m else {}
 
     class FeatureRegistryServiceClientV1(
