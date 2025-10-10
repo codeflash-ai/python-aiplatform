@@ -1,115 +1,67 @@
-# -*- coding: utf-8 -*-
-
-# Copyright 2023 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
 import itertools
 import json
 import pathlib
 import re
 import shutil
 import tempfile
-import requests
-from typing import (
-    Any,
-    Dict,
-    Iterator,
-    List,
-    NamedTuple,
-    Optional,
-    Sequence,
-    Tuple,
-    TYPE_CHECKING,
-    Union,
-)
+from typing import (TYPE_CHECKING, Any, Dict, Iterator, List, NamedTuple,
+                    Optional, Sequence, Tuple, Union)
 
-from google.api_core import operation
+import proto
+import requests
+from codeflash.verification.codeflash_capture import codeflash_capture
 from google.api_core import exceptions as api_exceptions
+from google.api_core import operation
 from google.auth import credentials as auth_credentials
 from google.auth.transport import requests as google_auth_requests
-from google.protobuf import duration_pb2
-import proto
+from google.protobuf import (duration_pb2, field_mask_pb2, json_format,
+                             timestamp_pb2)
 
 from google.cloud import aiplatform
-from google.cloud.aiplatform import base
-from google.cloud.aiplatform import constants
-from google.cloud.aiplatform import explain
-from google.cloud.aiplatform import initializer
-from google.cloud.aiplatform import jobs
-from google.cloud.aiplatform import models
-from google.cloud.aiplatform import utils
-from google.cloud.aiplatform.utils import gcs_utils
-from google.cloud.aiplatform.utils import _explanation_utils
-from google.cloud.aiplatform.utils import _ipython_utils
-from google.cloud.aiplatform import model_evaluation
-from google.cloud.aiplatform.compat.services import endpoint_service_client
+from google.cloud.aiplatform import (base, constants, explain, initializer,
+                                     jobs, model_evaluation, models, utils)
 from google.cloud.aiplatform.compat.services import (
-    deployment_resource_pool_service_client,
-)
-
-from google.cloud.aiplatform.compat.types import (
-    deployment_resource_pool as gca_deployment_resource_pool_compat,
-    deployed_model_ref as gca_deployed_model_ref_compat,
-    encryption_spec as gca_encryption_spec,
-    endpoint_v1beta1 as gca_endpoint_v1beta1_compat,
-    endpoint as gca_endpoint_compat,
-    explanation as gca_explanation_compat,
-    io as gca_io_compat,
-    machine_resources_v1beta1 as gca_machine_resources_v1beta1_compat,
-    machine_resources as gca_machine_resources_compat,
-    model as gca_model_compat,
-    model_service as gca_model_service_compat,
-    env_var as gca_env_var_compat,
-    service_networking as gca_service_networking,
-)
-
-from google.cloud.aiplatform.constants import (
-    prediction as prediction_constants,
-)
-
+    deployment_resource_pool_service_client, endpoint_service_client)
+from google.cloud.aiplatform.compat.types import \
+    deployed_model_ref as gca_deployed_model_ref_compat
+from google.cloud.aiplatform.compat.types import \
+    deployment_resource_pool as gca_deployment_resource_pool_compat
+from google.cloud.aiplatform.compat.types import \
+    encryption_spec as gca_encryption_spec
+from google.cloud.aiplatform.compat.types import \
+    endpoint as gca_endpoint_compat
+from google.cloud.aiplatform.compat.types import \
+    endpoint_v1beta1 as gca_endpoint_v1beta1_compat
+from google.cloud.aiplatform.compat.types import env_var as gca_env_var_compat
+from google.cloud.aiplatform.compat.types import \
+    explanation as gca_explanation_compat
+from google.cloud.aiplatform.compat.types import io as gca_io_compat
+from google.cloud.aiplatform.compat.types import \
+    machine_resources as gca_machine_resources_compat
+from google.cloud.aiplatform.compat.types import \
+    machine_resources_v1beta1 as gca_machine_resources_v1beta1_compat
+from google.cloud.aiplatform.compat.types import model as gca_model_compat
+from google.cloud.aiplatform.compat.types import \
+    model_service as gca_model_service_compat
+from google.cloud.aiplatform.compat.types import \
+    service_networking as gca_service_networking
+from google.cloud.aiplatform.constants import \
+    prediction as prediction_constants
+from google.cloud.aiplatform.utils import (_explanation_utils, _ipython_utils,
+                                           gcs_utils)
 from google.cloud.aiplatform_v1.types import model as model_v1
-
-from google.protobuf import field_mask_pb2, timestamp_pb2
-from google.protobuf import json_format
 
 if TYPE_CHECKING:
     from google.cloud.aiplatform.prediction import LocalModel
-
-_DEFAULT_MACHINE_TYPE = "n1-standard-2"
-_DEPLOYING_MODEL_TRAFFIC_SPLIT_KEY = "0"
+_DEFAULT_MACHINE_TYPE = 'n1-standard-2'
+_DEPLOYING_MODEL_TRAFFIC_SPLIT_KEY = '0'
 _SUCCESSFUL_HTTP_RESPONSE = 300
-_RAW_PREDICT_DEPLOYED_MODEL_ID_KEY = "X-Vertex-AI-Deployed-Model-Id"
-_RAW_PREDICT_MODEL_RESOURCE_KEY = "X-Vertex-AI-Model"
-_RAW_PREDICT_MODEL_VERSION_ID_KEY = "X-Vertex-AI-Model-Version-Id"
-
+_RAW_PREDICT_DEPLOYED_MODEL_ID_KEY = 'X-Vertex-AI-Deployed-Model-Id'
+_RAW_PREDICT_MODEL_RESOURCE_KEY = 'X-Vertex-AI-Model'
+_RAW_PREDICT_MODEL_VERSION_ID_KEY = 'X-Vertex-AI-Model-Version-Id'
 _LOGGER = base.Logger(__name__)
-
-
-_SUPPORTED_MODEL_FILE_NAMES = [
-    "model.pkl",
-    "model.joblib",
-    "model.bst",
-    "model.mar",
-    "saved_model.pb",
-    "saved_model.pbtxt",
-]
-
-_SUPPORTED_EVAL_PREDICTION_TYPES = [
-    "classification",
-    "regression",
-]
-
+_SUPPORTED_MODEL_FILE_NAMES = ['model.pkl', 'model.joblib', 'model.bst', 'model.mar', 'saved_model.pb', 'saved_model.pbtxt']
+_SUPPORTED_EVAL_PREDICTION_TYPES = ['classification', 'regression']
 
 class VersionInfo(NamedTuple):
     """VersionInfo class envelopes returned Model version information.
@@ -134,7 +86,6 @@ class VersionInfo(NamedTuple):
             The description of this version.
             Default is None.
     """
-
     version_id: str
     version_create_time: timestamp_pb2.Timestamp
     version_update_time: timestamp_pb2.Timestamp
@@ -142,7 +93,6 @@ class VersionInfo(NamedTuple):
     model_resource_name: str
     version_aliases: Optional[Sequence[str]] = None
     version_description: Optional[str] = None
-
 
 class Prediction(NamedTuple):
     """Prediction class envelopes returned Model predictions and the Model id.
@@ -165,7 +115,6 @@ class Prediction(NamedTuple):
             The explanations of the Model's predictions. It has the same number
             of elements as instances to be explained. Default is None.
     """
-
     predictions: List[Any]
     deployed_model_id: str
     metadata: Optional[Any] = None
@@ -173,23 +122,16 @@ class Prediction(NamedTuple):
     model_resource_name: Optional[str] = None
     explanations: Optional[Sequence[gca_explanation_compat.Explanation]] = None
 
-
 class DeploymentResourcePool(base.VertexAiResourceNounWithFutureManager):
     client_class = utils.DeploymentResourcePoolClientWithOverride
-    _resource_noun = "deploymentResourcePools"
-    _getter_method = "get_deployment_resource_pool"
-    _list_method = "list_deployment_resource_pools"
-    _delete_method = "delete_deployment_resource_pool"
-    _parse_resource_name_method = "parse_deployment_resource_pool_path"
-    _format_resource_name_method = "deployment_resource_pool_path"
+    _resource_noun = 'deploymentResourcePools'
+    _getter_method = 'get_deployment_resource_pool'
+    _list_method = 'list_deployment_resource_pools'
+    _delete_method = 'delete_deployment_resource_pool'
+    _parse_resource_name_method = 'parse_deployment_resource_pool_path'
+    _format_resource_name_method = 'deployment_resource_pool_path'
 
-    def __init__(
-        self,
-        deployment_resource_pool_name: str,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ):
+    def __init__(self, deployment_resource_pool_name: str, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None):
         """Retrieves a DeploymentResourcePool.
 
         Args:
@@ -211,50 +153,12 @@ class DeploymentResourcePool(base.VertexAiResourceNounWithFutureManager):
                 pool. If not set, the credentials given to `aiplatform.init`
                 will be used.
         """
-
-        super().__init__(
-            project=project,
-            location=location,
-            credentials=credentials,
-            resource_name=deployment_resource_pool_name,
-        )
-
-        deployment_resource_pool_name = utils.full_resource_name(
-            resource_name=deployment_resource_pool_name,
-            resource_noun=self._resource_noun,
-            parse_resource_name_method=self._parse_resource_name,
-            format_resource_name_method=self._format_resource_name,
-            project=project,
-            location=location,
-        )
-
-        self._gca_resource = self._get_gca_resource(
-            resource_name=deployment_resource_pool_name
-        )
+        super().__init__(project=project, location=location, credentials=credentials, resource_name=deployment_resource_pool_name)
+        deployment_resource_pool_name = utils.full_resource_name(resource_name=deployment_resource_pool_name, resource_noun=self._resource_noun, parse_resource_name_method=self._parse_resource_name, format_resource_name_method=self._format_resource_name, project=project, location=location)
+        self._gca_resource = self._get_gca_resource(resource_name=deployment_resource_pool_name)
 
     @classmethod
-    def create(
-        cls,
-        deployment_resource_pool_id: str,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-        credentials: Optional[auth_credentials.Credentials] = None,
-        machine_type: Optional[str] = None,
-        min_replica_count: int = 1,
-        max_replica_count: int = 1,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        autoscaling_target_cpu_utilization: Optional[int] = None,
-        autoscaling_target_accelerator_duty_cycle: Optional[int] = None,
-        sync=True,
-        create_request_timeout: Optional[float] = None,
-        reservation_affinity_type: Optional[str] = None,
-        reservation_affinity_key: Optional[str] = None,
-        reservation_affinity_values: Optional[List[str]] = None,
-        spot: bool = False,
-        required_replica_count: Optional[int] = 0,
-    ) -> "DeploymentResourcePool":
+    def create(cls, deployment_resource_pool_id: str, project: Optional[str]=None, location: Optional[str]=None, metadata: Sequence[Tuple[str, str]]=(), credentials: Optional[auth_credentials.Credentials]=None, machine_type: Optional[str]=None, min_replica_count: int=1, max_replica_count: int=1, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, autoscaling_target_cpu_utilization: Optional[int]=None, autoscaling_target_accelerator_duty_cycle: Optional[int]=None, sync=True, create_request_timeout: Optional[float]=None, reservation_affinity_type: Optional[str]=None, reservation_affinity_key: Optional[str]=None, reservation_affinity_values: Optional[List[str]]=None, spot: bool=False, required_replica_count: Optional[int]=0) -> 'DeploymentResourcePool':
         """Creates a new DeploymentResourcePool.
 
         Args:
@@ -338,60 +242,14 @@ class DeploymentResourcePool(base.VertexAiResourceNounWithFutureManager):
         Returns:
             DeploymentResourcePool
         """
-
         api_client = cls._instantiate_client(location=location, credentials=credentials)
-
         project = project or initializer.global_config.project
         location = location or initializer.global_config.location
-
-        return cls._create(
-            api_client=api_client,
-            deployment_resource_pool_id=deployment_resource_pool_id,
-            project=project,
-            location=location,
-            metadata=metadata,
-            credentials=credentials,
-            machine_type=machine_type,
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            accelerator_count=accelerator_count,
-            reservation_affinity_type=reservation_affinity_type,
-            reservation_affinity_key=reservation_affinity_key,
-            reservation_affinity_values=reservation_affinity_values,
-            autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization,
-            autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle,
-            spot=spot,
-            sync=sync,
-            create_request_timeout=create_request_timeout,
-            required_replica_count=required_replica_count,
-        )
+        return cls._create(api_client=api_client, deployment_resource_pool_id=deployment_resource_pool_id, project=project, location=location, metadata=metadata, credentials=credentials, machine_type=machine_type, min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, accelerator_count=accelerator_count, reservation_affinity_type=reservation_affinity_type, reservation_affinity_key=reservation_affinity_key, reservation_affinity_values=reservation_affinity_values, autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization, autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle, spot=spot, sync=sync, create_request_timeout=create_request_timeout, required_replica_count=required_replica_count)
 
     @classmethod
     @base.optional_sync()
-    def _create(
-        cls,
-        api_client: deployment_resource_pool_service_client.DeploymentResourcePoolServiceClient,
-        deployment_resource_pool_id: str,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-        credentials: Optional[auth_credentials.Credentials] = None,
-        machine_type: Optional[str] = None,
-        min_replica_count: int = 1,
-        max_replica_count: int = 1,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        reservation_affinity_type: Optional[str] = None,
-        reservation_affinity_key: Optional[str] = None,
-        reservation_affinity_values: Optional[List[str]] = None,
-        autoscaling_target_cpu_utilization: Optional[int] = None,
-        autoscaling_target_accelerator_duty_cycle: Optional[int] = None,
-        spot: bool = False,
-        sync=True,
-        create_request_timeout: Optional[float] = None,
-        required_replica_count: Optional[int] = 0,
-    ) -> "DeploymentResourcePool":
+    def _create(cls, api_client: deployment_resource_pool_service_client.DeploymentResourcePoolServiceClient, deployment_resource_pool_id: str, project: Optional[str]=None, location: Optional[str]=None, metadata: Sequence[Tuple[str, str]]=(), credentials: Optional[auth_credentials.Credentials]=None, machine_type: Optional[str]=None, min_replica_count: int=1, max_replica_count: int=1, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, reservation_affinity_type: Optional[str]=None, reservation_affinity_key: Optional[str]=None, reservation_affinity_values: Optional[List[str]]=None, autoscaling_target_cpu_utilization: Optional[int]=None, autoscaling_target_accelerator_duty_cycle: Optional[int]=None, spot: bool=False, sync=True, create_request_timeout: Optional[float]=None, required_replica_count: Optional[int]=0) -> 'DeploymentResourcePool':
         """Creates a new DeploymentResourcePool.
 
         Args:
@@ -478,89 +336,30 @@ class DeploymentResourcePool(base.VertexAiResourceNounWithFutureManager):
         Returns:
             DeploymentResourcePool
         """
-
-        parent = initializer.global_config.common_location_path(
-            project=project, location=location
-        )
-
-        dedicated_resources = gca_machine_resources_compat.DedicatedResources(
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            spot=spot,
-            required_replica_count=required_replica_count,
-        )
-
-        machine_spec = gca_machine_resources_compat.MachineSpec(
-            machine_type=machine_type
-        )
-
+        parent = initializer.global_config.common_location_path(project=project, location=location)
+        dedicated_resources = gca_machine_resources_compat.DedicatedResources(min_replica_count=min_replica_count, max_replica_count=max_replica_count, spot=spot, required_replica_count=required_replica_count)
+        machine_spec = gca_machine_resources_compat.MachineSpec(machine_type=machine_type)
         if autoscaling_target_cpu_utilization:
-            autoscaling_metric_spec = (
-                gca_machine_resources_compat.AutoscalingMetricSpec(
-                    metric_name=(
-                        "aiplatform.googleapis.com/prediction/online/cpu/utilization"
-                    ),
-                    target=autoscaling_target_cpu_utilization,
-                )
-            )
-            dedicated_resources.autoscaling_metric_specs.extend(
-                [autoscaling_metric_spec]
-            )
-
+            autoscaling_metric_spec = gca_machine_resources_compat.AutoscalingMetricSpec(metric_name='aiplatform.googleapis.com/prediction/online/cpu/utilization', target=autoscaling_target_cpu_utilization)
+            dedicated_resources.autoscaling_metric_specs.extend([autoscaling_metric_spec])
         if accelerator_type and accelerator_count:
             utils.validate_accelerator_type(accelerator_type)
             machine_spec.accelerator_type = accelerator_type
             machine_spec.accelerator_count = accelerator_count
-
             if autoscaling_target_accelerator_duty_cycle:
-                autoscaling_metric_spec = gca_machine_resources_compat.AutoscalingMetricSpec(
-                    metric_name="aiplatform.googleapis.com/prediction/online/accelerator/duty_cycle",
-                    target=autoscaling_target_accelerator_duty_cycle,
-                )
-                dedicated_resources.autoscaling_metric_specs.extend(
-                    [autoscaling_metric_spec]
-                )
-
+                autoscaling_metric_spec = gca_machine_resources_compat.AutoscalingMetricSpec(metric_name='aiplatform.googleapis.com/prediction/online/accelerator/duty_cycle', target=autoscaling_target_accelerator_duty_cycle)
+                dedicated_resources.autoscaling_metric_specs.extend([autoscaling_metric_spec])
         if reservation_affinity_type:
-            machine_spec.reservation_affinity = utils.get_reservation_affinity(
-                reservation_affinity_type,
-                reservation_affinity_key,
-                reservation_affinity_values,
-            )
-
+            machine_spec.reservation_affinity = utils.get_reservation_affinity(reservation_affinity_type, reservation_affinity_key, reservation_affinity_values)
         dedicated_resources.machine_spec = machine_spec
-
-        gapic_drp = gca_deployment_resource_pool_compat.DeploymentResourcePool(
-            dedicated_resources=dedicated_resources
-        )
-
-        operation_future = api_client.create_deployment_resource_pool(
-            parent=parent,
-            deployment_resource_pool=gapic_drp,
-            deployment_resource_pool_id=deployment_resource_pool_id,
-            metadata=metadata,
-            timeout=create_request_timeout,
-        )
-
+        gapic_drp = gca_deployment_resource_pool_compat.DeploymentResourcePool(dedicated_resources=dedicated_resources)
+        operation_future = api_client.create_deployment_resource_pool(parent=parent, deployment_resource_pool=gapic_drp, deployment_resource_pool_id=deployment_resource_pool_id, metadata=metadata, timeout=create_request_timeout)
         _LOGGER.log_create_with_lro(cls, operation_future)
-
         created_drp = operation_future.result()
+        _LOGGER.log_create_complete(cls, created_drp, 'deployment resource pool')
+        return cls._construct_sdk_resource_from_gapic(gapic_resource=created_drp, project=project, location=location, credentials=credentials)
 
-        _LOGGER.log_create_complete(cls, created_drp, "deployment resource pool")
-
-        return cls._construct_sdk_resource_from_gapic(
-            gapic_resource=created_drp,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
-
-    def query_deployed_models(
-        self,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ) -> List[gca_deployed_model_ref_compat.DeployedModelRef]:
+    def query_deployed_models(self, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None) -> List[gca_deployed_model_ref_compat.DeployedModelRef]:
         """Lists the deployed models using this resource pool.
 
         Args:
@@ -579,25 +378,12 @@ class DeploymentResourcePool(base.VertexAiResourceNounWithFutureManager):
             deployed model ID of the deployed models using this resource pool.
         """
         location = location or initializer.global_config.location
-        api_client = DeploymentResourcePool._instantiate_client(
-            location=location, credentials=credentials
-        )
-        response = api_client.query_deployed_models(
-            deployment_resource_pool=self.resource_name
-        )
-        return list(
-            itertools.chain(page.deployed_model_refs for page in response.pages)
-        )
+        api_client = DeploymentResourcePool._instantiate_client(location=location, credentials=credentials)
+        response = api_client.query_deployed_models(deployment_resource_pool=self.resource_name)
+        return list(itertools.chain((page.deployed_model_refs for page in response.pages)))
 
     @classmethod
-    def list(
-        cls,
-        filter: Optional[str] = None,
-        order_by: Optional[str] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ) -> List["models.DeploymentResourcePool"]:
+    def list(cls, filter: Optional[str]=None, order_by: Optional[str]=None, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None) -> List['models.DeploymentResourcePool']:
         """Lists the deployment resource pools.
 
         filter (str):
@@ -620,44 +406,27 @@ class DeploymentResourcePool(base.VertexAiResourceNounWithFutureManager):
         Returns:
             List of deployment resource pools.
         """
-        return cls._list(
-            filter=filter,
-            order_by=order_by,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
-
+        return cls._list(filter=filter, order_by=order_by, project=project, location=location, credentials=credentials)
 
 class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
     client_class = utils.EndpointClientWithOverride
-    _resource_noun = "endpoints"
-    _getter_method = "get_endpoint"
-    _list_method = "list_endpoints"
-    _delete_method = "delete_endpoint"
-    _parse_resource_name_method = "parse_endpoint_path"
-    _format_resource_name_method = "endpoint_path"
-    _preview_class = "google.cloud.aiplatform.aiplatform.preview.models.Endpoint"
+    _resource_noun = 'endpoints'
+    _getter_method = 'get_endpoint'
+    _list_method = 'list_endpoints'
+    _delete_method = 'delete_endpoint'
+    _parse_resource_name_method = 'parse_endpoint_path'
+    _format_resource_name_method = 'endpoint_path'
+    _preview_class = 'google.cloud.aiplatform.aiplatform.preview.models.Endpoint'
 
     @property
     def preview(self):
         """Return an Endpoint instance with preview features enabled."""
         from google.cloud.aiplatform.preview import models as preview_models
-
-        if not hasattr(self, "_preview_instance"):
-            self._preview_instance = preview_models.Endpoint(
-                self.resource_name, credentials=self.credentials
-            )
-
+        if not hasattr(self, '_preview_instance'):
+            self._preview_instance = preview_models.Endpoint(self.resource_name, credentials=self.credentials)
         return self._preview_instance
 
-    def __init__(
-        self,
-        endpoint_name: str,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ):
+    def __init__(self, endpoint_name: str, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None):
         """Retrieves an endpoint resource.
 
         Args:
@@ -675,56 +444,21 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 Optional. Custom credentials to use to upload this model. Overrides
                 credentials set in aiplatform.init.
         """
-
-        super().__init__(
-            project=project,
-            location=location,
-            credentials=credentials,
-            resource_name=endpoint_name,
-        )
-
-        endpoint_name = utils.full_resource_name(
-            resource_name=endpoint_name,
-            resource_noun="endpoints",
-            parse_resource_name_method=self._parse_resource_name,
-            format_resource_name_method=self._format_resource_name,
-            project=project,
-            location=location,
-        )
-
-        # Lazy load the Endpoint gca_resource until needed
+        super().__init__(project=project, location=location, credentials=credentials, resource_name=endpoint_name)
+        endpoint_name = utils.full_resource_name(resource_name=endpoint_name, resource_noun='endpoints', parse_resource_name_method=self._parse_resource_name, format_resource_name_method=self._format_resource_name, project=project, location=location)
         self._gca_resource = gca_endpoint_compat.Endpoint(name=endpoint_name)
-
         self.authorized_session = None
 
     @property
     def _prediction_client(self) -> utils.PredictionClientWithOverride:
-        # The attribute might not exist due to issues in
-        # `VertexAiResourceNounWithFutureManager._sync_object_with_future_result`
-        # We should switch to @functools.cached_property once its available.
-        if not getattr(self, "_prediction_client_value", None):
-            self._prediction_client_value = initializer.global_config.create_client(
-                client_class=utils.PredictionClientWithOverride,
-                credentials=self.credentials,
-                location_override=self.location,
-                prediction_client=True,
-            )
+        if not getattr(self, '_prediction_client_value', None):
+            self._prediction_client_value = initializer.global_config.create_client(client_class=utils.PredictionClientWithOverride, credentials=self.credentials, location_override=self.location, prediction_client=True)
         return self._prediction_client_value
 
     @property
     def _prediction_async_client(self) -> utils.PredictionAsyncClientWithOverride:
-        # The attribute might not exist due to issues in
-        # `VertexAiResourceNounWithFutureManager._sync_object_with_future_result`
-        # We should switch to @functools.cached_property once its available.
-        if not getattr(self, "_prediction_async_client_value", None):
-            self._prediction_async_client_value = (
-                initializer.global_config.create_client(
-                    client_class=utils.PredictionAsyncClientWithOverride,
-                    credentials=self.credentials,
-                    location_override=self.location,
-                    prediction_client=True,
-                )
-            )
+        if not getattr(self, '_prediction_async_client_value', None):
+            self._prediction_async_client_value = initializer.global_config.create_client(client_class=utils.PredictionAsyncClientWithOverride, credentials=self.credentials, location_override=self.location, prediction_client=True)
         return self._prediction_async_client_value
 
     def _skipped_getter_call(self) -> bool:
@@ -733,15 +467,13 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         Returns False if `_gca_resource` is None or fully populated. Returns True
         if `_gca_resource` is partially populated
         """
-        return self._gca_resource and not self._gca_resource.create_time
+        return self._gca_resource and (not self._gca_resource.create_time)
 
     def _sync_gca_resource_if_skipped(self) -> None:
         """Sync GAPIC service representation of Endpoint class resource only if
         get_endpoint() was never called."""
         if self._skipped_getter_call():
-            self._gca_resource = self._get_gca_resource(
-                resource_name=self._gca_resource.name
-            )
+            self._gca_resource = self._get_gca_resource(resource_name=self._gca_resource.name)
 
     def _assert_gca_resource_is_available(self) -> None:
         """Ensures Endpoint getter was called at least once before
@@ -775,15 +507,13 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         unspecified, the Endpoint is not peered with any network.
         """
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "network", None)
+        return getattr(self._gca_resource, 'network', None)
 
     @property
-    def private_service_connect_config(
-        self,
-    ) -> Optional[gca_service_networking.PrivateServiceConnectConfig]:
+    def private_service_connect_config(self) -> Optional[gca_service_networking.PrivateServiceConnectConfig]:
         """The Private Service Connect configuration for this Endpoint."""
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "private_service_connect_config", None)
+        return getattr(self._gca_resource, 'private_service_connect_config', None)
 
     @property
     def dedicated_endpoint_dns(self) -> Optional[str]:
@@ -792,15 +522,11 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         This property is only available if dedicated endpoint is enabled.
         If dedicated endpoint is not enabled, this property returns None.
         """
-        if re.match(r"^projects/.*/endpoints/.*$", self._gca_resource.name):
-            dedicated_endpoint_dns = getattr(
-                self._gca_resource, "dedicated_endpoint_dns", None
-            )
-            if self.dedicated_endpoint_enabled and not dedicated_endpoint_dns:
+        if re.match('^projects/.*/endpoints/.*$', self._gca_resource.name):
+            dedicated_endpoint_dns = getattr(self._gca_resource, 'dedicated_endpoint_dns', None)
+            if self.dedicated_endpoint_enabled and (not dedicated_endpoint_dns):
                 self._sync_gca_resource()
-                dedicated_endpoint_dns = getattr(
-                    self._gca_resource, "dedicated_endpoint_dns", None
-                )
+                dedicated_endpoint_dns = getattr(self._gca_resource, 'dedicated_endpoint_dns', None)
             return dedicated_endpoint_dns
         return None
 
@@ -810,31 +536,13 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
 
         This property will be true if dedicated endpoint is enabled.
         """
-        if re.match(r"^projects/.*/endpoints/.*$", self._gca_resource.name):
+        if re.match('^projects/.*/endpoints/.*$', self._gca_resource.name):
             self._assert_gca_resource_is_available()
-            return getattr(self._gca_resource, "dedicated_endpoint_enabled", False)
+            return getattr(self._gca_resource, 'dedicated_endpoint_enabled', False)
         return False
 
     @classmethod
-    def create(
-        cls,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        labels: Optional[Dict[str, str]] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        sync=True,
-        create_request_timeout: Optional[float] = None,
-        endpoint_id: Optional[str] = None,
-        enable_request_response_logging=False,
-        request_response_logging_sampling_rate: Optional[float] = None,
-        request_response_logging_bq_destination_table: Optional[str] = None,
-        dedicated_endpoint_enabled=False,
-        inference_timeout: Optional[int] = None,
-    ) -> "Endpoint":
+    def create(cls, display_name: Optional[str]=None, description: Optional[str]=None, labels: Optional[Dict[str, str]]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None, encryption_spec_key_name: Optional[str]=None, sync=True, create_request_timeout: Optional[float]=None, endpoint_id: Optional[str]=None, enable_request_response_logging=False, request_response_logging_sampling_rate: Optional[float]=None, request_response_logging_bq_destination_table: Optional[str]=None, dedicated_endpoint_enabled=False, inference_timeout: Optional[int]=None) -> 'Endpoint':
         """Creates a new endpoint.
 
         Args:
@@ -913,87 +621,24 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 Created endpoint.
         """
         api_client = cls._instantiate_client(location=location, credentials=credentials)
-
         if not display_name:
             display_name = cls._generate_display_name()
-
         utils.validate_display_name(display_name)
         if labels:
             utils.validate_labels(labels)
-
         project = project or initializer.global_config.project
         location = location or initializer.global_config.location
-
         predict_request_response_logging_config = None
         if enable_request_response_logging:
-            predict_request_response_logging_config = (
-                gca_endpoint_compat.PredictRequestResponseLoggingConfig(
-                    enabled=True,
-                    sampling_rate=request_response_logging_sampling_rate,
-                    bigquery_destination=gca_io_compat.BigQueryDestination(
-                        output_uri=request_response_logging_bq_destination_table
-                    ),
-                )
-            )
-
+            predict_request_response_logging_config = gca_endpoint_compat.PredictRequestResponseLoggingConfig(enabled=True, sampling_rate=request_response_logging_sampling_rate, bigquery_destination=gca_io_compat.BigQueryDestination(output_uri=request_response_logging_bq_destination_table))
         client_connection_config = None
-        if (
-            inference_timeout is not None
-            and inference_timeout > 0
-            and dedicated_endpoint_enabled
-        ):
-            client_connection_config = gca_endpoint_compat.ClientConnectionConfig(
-                inference_timeout=duration_pb2.Duration(seconds=inference_timeout)
-            )
-
-        return cls._create(
-            api_client=api_client,
-            display_name=display_name,
-            project=project,
-            location=location,
-            description=description,
-            labels=labels,
-            metadata=metadata,
-            credentials=credentials,
-            encryption_spec=initializer.global_config.get_encryption_spec(
-                encryption_spec_key_name=encryption_spec_key_name
-            ),
-            sync=sync,
-            create_request_timeout=create_request_timeout,
-            endpoint_id=endpoint_id,
-            predict_request_response_logging_config=predict_request_response_logging_config,
-            dedicated_endpoint_enabled=dedicated_endpoint_enabled,
-            client_connection_config=client_connection_config,
-        )
+        if inference_timeout is not None and inference_timeout > 0 and dedicated_endpoint_enabled:
+            client_connection_config = gca_endpoint_compat.ClientConnectionConfig(inference_timeout=duration_pb2.Duration(seconds=inference_timeout))
+        return cls._create(api_client=api_client, display_name=display_name, project=project, location=location, description=description, labels=labels, metadata=metadata, credentials=credentials, encryption_spec=initializer.global_config.get_encryption_spec(encryption_spec_key_name=encryption_spec_key_name), sync=sync, create_request_timeout=create_request_timeout, endpoint_id=endpoint_id, predict_request_response_logging_config=predict_request_response_logging_config, dedicated_endpoint_enabled=dedicated_endpoint_enabled, client_connection_config=client_connection_config)
 
     @classmethod
     @base.optional_sync()
-    def _create(
-        cls,
-        api_client: endpoint_service_client.EndpointServiceClient,
-        display_name: str,
-        project: str,
-        location: str,
-        description: Optional[str] = None,
-        labels: Optional[Dict[str, str]] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        credentials: Optional[auth_credentials.Credentials] = None,
-        encryption_spec: Optional[gca_encryption_spec.EncryptionSpec] = None,
-        network: Optional[str] = None,
-        sync=True,
-        create_request_timeout: Optional[float] = None,
-        endpoint_id: Optional[str] = None,
-        predict_request_response_logging_config: Optional[
-            gca_endpoint_compat.PredictRequestResponseLoggingConfig
-        ] = None,
-        private_service_connect_config: Optional[
-            gca_service_networking.PrivateServiceConnectConfig
-        ] = None,
-        dedicated_endpoint_enabled=False,
-        client_connection_config: Optional[
-            gca_endpoint_compat.ClientConnectionConfig
-        ] = None,
-    ) -> "Endpoint":
+    def _create(cls, api_client: endpoint_service_client.EndpointServiceClient, display_name: str, project: str, location: str, description: Optional[str]=None, labels: Optional[Dict[str, str]]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), credentials: Optional[auth_credentials.Credentials]=None, encryption_spec: Optional[gca_encryption_spec.EncryptionSpec]=None, network: Optional[str]=None, sync=True, create_request_timeout: Optional[float]=None, endpoint_id: Optional[str]=None, predict_request_response_logging_config: Optional[gca_endpoint_compat.PredictRequestResponseLoggingConfig]=None, private_service_connect_config: Optional[gca_service_networking.PrivateServiceConnectConfig]=None, dedicated_endpoint_enabled=False, client_connection_config: Optional[gca_endpoint_compat.ClientConnectionConfig]=None) -> 'Endpoint':
         """Creates a new endpoint by calling the API client.
 
         Args:
@@ -1070,52 +715,16 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             endpoint (aiplatform.Endpoint):
                 Created endpoint.
         """
-
-        parent = initializer.global_config.common_location_path(
-            project=project, location=location
-        )
-
-        gapic_endpoint = gca_endpoint_compat.Endpoint(
-            display_name=display_name,
-            description=description,
-            labels=labels,
-            encryption_spec=encryption_spec,
-            network=network,
-            predict_request_response_logging_config=predict_request_response_logging_config,
-            private_service_connect_config=private_service_connect_config,
-            dedicated_endpoint_enabled=dedicated_endpoint_enabled,
-            client_connection_config=client_connection_config,
-        )
-
-        operation_future = api_client.create_endpoint(
-            parent=parent,
-            endpoint=gapic_endpoint,
-            endpoint_id=endpoint_id,
-            metadata=metadata,
-            timeout=create_request_timeout,
-        )
-
+        parent = initializer.global_config.common_location_path(project=project, location=location)
+        gapic_endpoint = gca_endpoint_compat.Endpoint(display_name=display_name, description=description, labels=labels, encryption_spec=encryption_spec, network=network, predict_request_response_logging_config=predict_request_response_logging_config, private_service_connect_config=private_service_connect_config, dedicated_endpoint_enabled=dedicated_endpoint_enabled, client_connection_config=client_connection_config)
+        operation_future = api_client.create_endpoint(parent=parent, endpoint=gapic_endpoint, endpoint_id=endpoint_id, metadata=metadata, timeout=create_request_timeout)
         _LOGGER.log_create_with_lro(cls, operation_future)
-
         created_endpoint = operation_future.result()
-
-        _LOGGER.log_create_complete(cls, created_endpoint, "endpoint")
-
-        return cls._construct_sdk_resource_from_gapic(
-            gapic_resource=created_endpoint,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
+        _LOGGER.log_create_complete(cls, created_endpoint, 'endpoint')
+        return cls._construct_sdk_resource_from_gapic(gapic_resource=created_endpoint, project=project, location=location, credentials=credentials)
 
     @classmethod
-    def _construct_sdk_resource_from_gapic(
-        cls,
-        gapic_resource: proto.Message,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ) -> "Endpoint":
+    def _construct_sdk_resource_from_gapic(cls, gapic_resource: proto.Message, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None) -> 'Endpoint':
         """Given a GAPIC Endpoint object, return the SDK representation.
 
         Args:
@@ -1136,21 +745,12 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             Endpoint (aiplatform.Endpoint):
                 An initialized Endpoint resource.
         """
-        endpoint = super()._construct_sdk_resource_from_gapic(
-            gapic_resource=gapic_resource,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
+        endpoint = super()._construct_sdk_resource_from_gapic(gapic_resource=gapic_resource, project=project, location=location, credentials=credentials)
         endpoint.authorized_session = None
-
         return endpoint
 
     @staticmethod
-    def _allocate_traffic(
-        traffic_split: Dict[str, int],
-        traffic_percentage: int,
-    ) -> Dict[str, int]:
+    def _allocate_traffic(traffic_split: Dict[str, int], traffic_percentage: int) -> Dict[str, int]:
         """Allocates desired traffic to new deployed model and scales traffic
         of older deployed models.
 
@@ -1173,22 +773,16 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 new_traffic = int(current_traffic / 100 * old_models_traffic)
                 new_traffic_split[deployed_model] = new_traffic
                 unallocated_traffic -= new_traffic
-            # will likely under-allocate. make total 100.
             for deployed_model in new_traffic_split:
                 if unallocated_traffic == 0:
                     break
                 new_traffic_split[deployed_model] += 1
                 unallocated_traffic -= 1
-
         new_traffic_split[_DEPLOYING_MODEL_TRAFFIC_SPLIT_KEY] = traffic_percentage
-
         return new_traffic_split
 
     @staticmethod
-    def _unallocate_traffic(
-        traffic_split: Dict[str, int],
-        deployed_model_id: str,
-    ) -> Dict[str, int]:
+    def _unallocate_traffic(traffic_split: Dict[str, int], deployed_model_id: str) -> Dict[str, int]:
         """Sets deployed model id's traffic to 0 and scales the traffic of
         other deployed models.
 
@@ -1206,7 +800,6 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         del new_traffic_split[deployed_model_id]
         deployed_model_id_traffic = traffic_split[deployed_model_id]
         traffic_percent_left = 100 - deployed_model_id_traffic
-
         if traffic_percent_left:
             unallocated_traffic = 100
             for deployed_model in new_traffic_split:
@@ -1214,28 +807,16 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 new_traffic = int(current_traffic / traffic_percent_left * 100)
                 new_traffic_split[deployed_model] = new_traffic
                 unallocated_traffic -= new_traffic
-            # will likely under-allocate. make total 100.
             for deployed_model in new_traffic_split:
                 if unallocated_traffic == 0:
                     break
                 new_traffic_split[deployed_model] += 1
                 unallocated_traffic -= 1
-
         new_traffic_split[deployed_model_id] = 0
-
         return new_traffic_split
 
     @staticmethod
-    def _validate_deploy_args(
-        min_replica_count: Optional[int],
-        max_replica_count: Optional[int],
-        accelerator_type: Optional[str],
-        deployed_model_display_name: Optional[str],
-        traffic_split: Optional[Dict[str, int]],
-        traffic_percentage: Optional[int],
-        deployment_resource_pool: Optional[DeploymentResourcePool],
-        required_replica_count: Optional[int],
-    ):
+    def _validate_deploy_args(min_replica_count: Optional[int], max_replica_count: Optional[int], accelerator_type: Optional[str], deployed_model_display_name: Optional[str], traffic_split: Optional[Dict[str, int]], traffic_percentage: Optional[int], deployment_resource_pool: Optional[DeploymentResourcePool], required_replica_count: Optional[int]):
         """Helper method to validate deploy arguments.
 
         Args:
@@ -1296,90 +877,31 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 < 0. Or if traffic_split does not sum to 100.
         """
         if deployment_resource_pool:
-            # Validate that replica count and deployment resource pool are not
-            # both specified.
-            if (
-                min_replica_count
-                and min_replica_count != 1
-                or max_replica_count
-                and max_replica_count != 1
-                or required_replica_count
-                and required_replica_count != 0
-            ):
-                raise ValueError(
-                    "Ignoring explicitly specified replica counts, "
-                    "since deployment_resource_pool was also given."
-                )
+            if min_replica_count and min_replica_count != 1 or (max_replica_count and max_replica_count != 1) or (required_replica_count and required_replica_count != 0):
+                raise ValueError('Ignoring explicitly specified replica counts, since deployment_resource_pool was also given.')
             if accelerator_type:
-                raise ValueError(
-                    "Conflicting deployment parameters were given."
-                    "deployment_resource_pool may not be specified at the same"
-                    "time as accelerator_type. "
-                )
+                raise ValueError('Conflicting deployment parameters were given.deployment_resource_pool may not be specified at the sametime as accelerator_type. ')
         else:
-            # Validate that a non-negative replica count is given, and validate
-            # the accelerator type.
             if min_replica_count < 0:
-                raise ValueError("Min replica cannot be negative.")
+                raise ValueError('Min replica cannot be negative.')
             if max_replica_count < 0:
-                raise ValueError("Max replica cannot be negative.")
+                raise ValueError('Max replica cannot be negative.')
             if required_replica_count and required_replica_count < 0:
-                raise ValueError("Required replica cannot be negative.")
+                raise ValueError('Required replica cannot be negative.')
             if accelerator_type:
                 utils.validate_accelerator_type(accelerator_type)
-
         if deployed_model_display_name is not None:
             utils.validate_display_name(deployed_model_display_name)
-
         if traffic_split is None:
             if traffic_percentage > 100:
-                raise ValueError("Traffic percentage cannot be greater than 100.")
+                raise ValueError('Traffic percentage cannot be greater than 100.')
             if traffic_percentage < 0:
-                raise ValueError("Traffic percentage cannot be negative.")
-
+                raise ValueError('Traffic percentage cannot be negative.')
         elif traffic_split:
             if sum(traffic_split.values()) != 100:
-                raise ValueError(
-                    "Sum of all traffic within traffic split needs to be 100."
-                )
+                raise ValueError('Sum of all traffic within traffic split needs to be 100.')
 
-    def deploy(
-        self,
-        model: "Model",
-        deployed_model_display_name: Optional[str] = None,
-        traffic_percentage: int = 0,
-        traffic_split: Optional[Dict[str, int]] = None,
-        machine_type: Optional[str] = None,
-        min_replica_count: int = 1,
-        max_replica_count: int = 1,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        gpu_partition_size: Optional[str] = None,
-        tpu_topology: Optional[str] = None,
-        service_account: Optional[str] = None,
-        explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata] = None,
-        explanation_parameters: Optional[
-            aiplatform.explain.ExplanationParameters
-        ] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        sync=True,
-        deploy_request_timeout: Optional[float] = None,
-        autoscaling_target_cpu_utilization: Optional[int] = None,
-        autoscaling_target_accelerator_duty_cycle: Optional[int] = None,
-        autoscaling_target_request_count_per_minute: Optional[int] = None,
-        autoscaling_target_pubsub_num_undelivered_messages: Optional[int] = None,
-        autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]] = None,
-        enable_access_logging=False,
-        disable_container_logging: bool = False,
-        deployment_resource_pool: Optional[DeploymentResourcePool] = None,
-        reservation_affinity_type: Optional[str] = None,
-        reservation_affinity_key: Optional[str] = None,
-        reservation_affinity_values: Optional[List[str]] = None,
-        spot: bool = False,
-        fast_tryout_enabled: bool = False,
-        system_labels: Optional[Dict[str, str]] = None,
-        required_replica_count: Optional[int] = 0,
-    ) -> None:
+    def deploy(self, model: 'Model', deployed_model_display_name: Optional[str]=None, traffic_percentage: int=0, traffic_split: Optional[Dict[str, int]]=None, machine_type: Optional[str]=None, min_replica_count: int=1, max_replica_count: int=1, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, gpu_partition_size: Optional[str]=None, tpu_topology: Optional[str]=None, service_account: Optional[str]=None, explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata]=None, explanation_parameters: Optional[aiplatform.explain.ExplanationParameters]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), sync=True, deploy_request_timeout: Optional[float]=None, autoscaling_target_cpu_utilization: Optional[int]=None, autoscaling_target_accelerator_duty_cycle: Optional[int]=None, autoscaling_target_request_count_per_minute: Optional[int]=None, autoscaling_target_pubsub_num_undelivered_messages: Optional[int]=None, autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]]=None, enable_access_logging=False, disable_container_logging: bool=False, deployment_resource_pool: Optional[DeploymentResourcePool]=None, reservation_affinity_type: Optional[str]=None, reservation_affinity_key: Optional[str]=None, reservation_affinity_values: Optional[List[str]]=None, spot: bool=False, fast_tryout_enabled: bool=False, system_labels: Optional[Dict[str, str]]=None, required_replica_count: Optional[int]=0) -> None:
         """Deploys a Model to the Endpoint.
 
         Args:
@@ -1515,92 +1037,12 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 rest of the replicas will be retried.
         """
         self._sync_gca_resource_if_skipped()
-
-        self._validate_deploy_args(
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            deployed_model_display_name=deployed_model_display_name,
-            traffic_split=traffic_split,
-            traffic_percentage=traffic_percentage,
-            deployment_resource_pool=deployment_resource_pool,
-            required_replica_count=required_replica_count,
-        )
-
-        explanation_spec = _explanation_utils.create_and_validate_explanation_spec(
-            explanation_metadata=explanation_metadata,
-            explanation_parameters=explanation_parameters,
-        )
-
-        self._deploy(
-            model=model,
-            deployed_model_display_name=deployed_model_display_name,
-            traffic_percentage=traffic_percentage,
-            traffic_split=traffic_split,
-            machine_type=machine_type,
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            accelerator_count=accelerator_count,
-            gpu_partition_size=gpu_partition_size,
-            tpu_topology=tpu_topology,
-            reservation_affinity_type=reservation_affinity_type,
-            reservation_affinity_key=reservation_affinity_key,
-            reservation_affinity_values=reservation_affinity_values,
-            service_account=service_account,
-            explanation_spec=explanation_spec,
-            metadata=metadata,
-            sync=sync,
-            deploy_request_timeout=deploy_request_timeout,
-            autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization,
-            autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle,
-            autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute,
-            autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages,
-            autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels,
-            spot=spot,
-            enable_access_logging=enable_access_logging,
-            disable_container_logging=disable_container_logging,
-            deployment_resource_pool=deployment_resource_pool,
-            fast_tryout_enabled=fast_tryout_enabled,
-            system_labels=system_labels,
-            required_replica_count=required_replica_count,
-        )
+        self._validate_deploy_args(min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, deployed_model_display_name=deployed_model_display_name, traffic_split=traffic_split, traffic_percentage=traffic_percentage, deployment_resource_pool=deployment_resource_pool, required_replica_count=required_replica_count)
+        explanation_spec = _explanation_utils.create_and_validate_explanation_spec(explanation_metadata=explanation_metadata, explanation_parameters=explanation_parameters)
+        self._deploy(model=model, deployed_model_display_name=deployed_model_display_name, traffic_percentage=traffic_percentage, traffic_split=traffic_split, machine_type=machine_type, min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, accelerator_count=accelerator_count, gpu_partition_size=gpu_partition_size, tpu_topology=tpu_topology, reservation_affinity_type=reservation_affinity_type, reservation_affinity_key=reservation_affinity_key, reservation_affinity_values=reservation_affinity_values, service_account=service_account, explanation_spec=explanation_spec, metadata=metadata, sync=sync, deploy_request_timeout=deploy_request_timeout, autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization, autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle, autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute, autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages, autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels, spot=spot, enable_access_logging=enable_access_logging, disable_container_logging=disable_container_logging, deployment_resource_pool=deployment_resource_pool, fast_tryout_enabled=fast_tryout_enabled, system_labels=system_labels, required_replica_count=required_replica_count)
 
     @base.optional_sync()
-    def _deploy(
-        self,
-        model: "Model",
-        deployed_model_display_name: Optional[str] = None,
-        traffic_percentage: Optional[int] = 0,
-        traffic_split: Optional[Dict[str, int]] = None,
-        machine_type: Optional[str] = None,
-        min_replica_count: int = 1,
-        max_replica_count: int = 1,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        gpu_partition_size: Optional[str] = None,
-        tpu_topology: Optional[str] = None,
-        reservation_affinity_type: Optional[str] = None,
-        reservation_affinity_key: Optional[str] = None,
-        reservation_affinity_values: Optional[List[str]] = None,
-        service_account: Optional[str] = None,
-        explanation_spec: Optional[aiplatform.explain.ExplanationSpec] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        sync=True,
-        deploy_request_timeout: Optional[float] = None,
-        autoscaling_target_cpu_utilization: Optional[int] = None,
-        autoscaling_target_accelerator_duty_cycle: Optional[int] = None,
-        autoscaling_target_request_count_per_minute: Optional[int] = None,
-        autoscaling_target_pubsub_num_undelivered_messages: Optional[int] = None,
-        autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]] = None,
-        spot: bool = False,
-        enable_access_logging=False,
-        disable_container_logging: bool = False,
-        deployment_resource_pool: Optional[DeploymentResourcePool] = None,
-        fast_tryout_enabled: bool = False,
-        system_labels: Optional[Dict[str, str]] = None,
-        required_replica_count: Optional[int] = 0,
-    ) -> None:
+    def _deploy(self, model: 'Model', deployed_model_display_name: Optional[str]=None, traffic_percentage: Optional[int]=0, traffic_split: Optional[Dict[str, int]]=None, machine_type: Optional[str]=None, min_replica_count: int=1, max_replica_count: int=1, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, gpu_partition_size: Optional[str]=None, tpu_topology: Optional[str]=None, reservation_affinity_type: Optional[str]=None, reservation_affinity_key: Optional[str]=None, reservation_affinity_values: Optional[List[str]]=None, service_account: Optional[str]=None, explanation_spec: Optional[aiplatform.explain.ExplanationSpec]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), sync=True, deploy_request_timeout: Optional[float]=None, autoscaling_target_cpu_utilization: Optional[int]=None, autoscaling_target_accelerator_duty_cycle: Optional[int]=None, autoscaling_target_request_count_per_minute: Optional[int]=None, autoscaling_target_pubsub_num_undelivered_messages: Optional[int]=None, autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]]=None, spot: bool=False, enable_access_logging=False, disable_container_logging: bool=False, deployment_resource_pool: Optional[DeploymentResourcePool]=None, fast_tryout_enabled: bool=False, system_labels: Optional[Dict[str, str]]=None, required_replica_count: Optional[int]=0) -> None:
         """Deploys a Model to the Endpoint.
 
         Args:
@@ -1729,89 +1171,13 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 available_replica_count reaches required_replica_count, and the
                 rest of the replicas will be retried.
         """
-        _LOGGER.log_action_start_against_resource(
-            f"Deploying Model {model.resource_name} to", "", self
-        )
-
-        self._deploy_call(
-            api_client=self.api_client,
-            endpoint_resource_name=self.resource_name,
-            model=model,
-            endpoint_resource_traffic_split=self._gca_resource.traffic_split,
-            network=self.network,
-            deployed_model_display_name=deployed_model_display_name,
-            traffic_percentage=traffic_percentage,
-            traffic_split=traffic_split,
-            machine_type=machine_type,
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            accelerator_count=accelerator_count,
-            gpu_partition_size=gpu_partition_size,
-            tpu_topology=tpu_topology,
-            reservation_affinity_type=reservation_affinity_type,
-            reservation_affinity_key=reservation_affinity_key,
-            reservation_affinity_values=reservation_affinity_values,
-            service_account=service_account,
-            explanation_spec=explanation_spec,
-            metadata=metadata,
-            deploy_request_timeout=deploy_request_timeout,
-            autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization,
-            autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle,
-            autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute,
-            autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages,
-            autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels,
-            spot=spot,
-            enable_access_logging=enable_access_logging,
-            disable_container_logging=disable_container_logging,
-            deployment_resource_pool=deployment_resource_pool,
-            fast_tryout_enabled=fast_tryout_enabled,
-            system_labels=system_labels,
-            required_replica_count=required_replica_count,
-        )
-
-        _LOGGER.log_action_completed_against_resource("model", "deployed", self)
-
+        _LOGGER.log_action_start_against_resource(f'Deploying Model {model.resource_name} to', '', self)
+        self._deploy_call(api_client=self.api_client, endpoint_resource_name=self.resource_name, model=model, endpoint_resource_traffic_split=self._gca_resource.traffic_split, network=self.network, deployed_model_display_name=deployed_model_display_name, traffic_percentage=traffic_percentage, traffic_split=traffic_split, machine_type=machine_type, min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, accelerator_count=accelerator_count, gpu_partition_size=gpu_partition_size, tpu_topology=tpu_topology, reservation_affinity_type=reservation_affinity_type, reservation_affinity_key=reservation_affinity_key, reservation_affinity_values=reservation_affinity_values, service_account=service_account, explanation_spec=explanation_spec, metadata=metadata, deploy_request_timeout=deploy_request_timeout, autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization, autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle, autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute, autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages, autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels, spot=spot, enable_access_logging=enable_access_logging, disable_container_logging=disable_container_logging, deployment_resource_pool=deployment_resource_pool, fast_tryout_enabled=fast_tryout_enabled, system_labels=system_labels, required_replica_count=required_replica_count)
+        _LOGGER.log_action_completed_against_resource('model', 'deployed', self)
         self._sync_gca_resource()
 
     @classmethod
-    def _deploy_call(
-        cls,
-        api_client: endpoint_service_client.EndpointServiceClient,
-        endpoint_resource_name: str,
-        model: "Model",
-        endpoint_resource_traffic_split: Optional[proto.MapField] = None,
-        network: Optional[str] = None,
-        deployed_model_display_name: Optional[str] = None,
-        traffic_percentage: Optional[int] = 0,
-        traffic_split: Optional[Dict[str, int]] = None,
-        machine_type: Optional[str] = None,
-        min_replica_count: int = 1,
-        max_replica_count: int = 1,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        gpu_partition_size: Optional[str] = None,
-        tpu_topology: Optional[str] = None,
-        reservation_affinity_type: Optional[str] = None,
-        reservation_affinity_key: Optional[str] = None,
-        reservation_affinity_values: Optional[List[str]] = None,
-        service_account: Optional[str] = None,
-        explanation_spec: Optional[aiplatform.explain.ExplanationSpec] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        deploy_request_timeout: Optional[float] = None,
-        autoscaling_target_cpu_utilization: Optional[int] = None,
-        autoscaling_target_accelerator_duty_cycle: Optional[int] = None,
-        autoscaling_target_request_count_per_minute: Optional[int] = None,
-        autoscaling_target_pubsub_num_undelivered_messages: Optional[int] = None,
-        autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]] = None,
-        spot: bool = False,
-        enable_access_logging=False,
-        disable_container_logging: bool = False,
-        deployment_resource_pool: Optional[DeploymentResourcePool] = None,
-        fast_tryout_enabled: bool = False,
-        system_labels: Optional[Dict[str, str]] = None,
-        required_replica_count: Optional[int] = 0,
-    ) -> None:
+    def _deploy_call(cls, api_client: endpoint_service_client.EndpointServiceClient, endpoint_resource_name: str, model: 'Model', endpoint_resource_traffic_split: Optional[proto.MapField]=None, network: Optional[str]=None, deployed_model_display_name: Optional[str]=None, traffic_percentage: Optional[int]=0, traffic_split: Optional[Dict[str, int]]=None, machine_type: Optional[str]=None, min_replica_count: int=1, max_replica_count: int=1, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, gpu_partition_size: Optional[str]=None, tpu_topology: Optional[str]=None, reservation_affinity_type: Optional[str]=None, reservation_affinity_key: Optional[str]=None, reservation_affinity_values: Optional[List[str]]=None, service_account: Optional[str]=None, explanation_spec: Optional[aiplatform.explain.ExplanationSpec]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), deploy_request_timeout: Optional[float]=None, autoscaling_target_cpu_utilization: Optional[int]=None, autoscaling_target_accelerator_duty_cycle: Optional[int]=None, autoscaling_target_request_count_per_minute: Optional[int]=None, autoscaling_target_pubsub_num_undelivered_messages: Optional[int]=None, autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]]=None, spot: bool=False, enable_access_logging=False, disable_container_logging: bool=False, deployment_resource_pool: Optional[DeploymentResourcePool]=None, fast_tryout_enabled: bool=False, system_labels: Optional[Dict[str, str]]=None, required_replica_count: Optional[int]=0) -> None:
         """Helper method to deploy model to endpoint.
 
         Args:
@@ -1955,294 +1321,96 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             ValueError: If both `explanation_spec` and `deployment_resource_pool`
                 are present.
         """
-        # The two features are incompatible due to API versioning issue.
-        # TODO(b/436626409) after adding the disable_container_logging to v1 proto
-        # remove the incomaptiblity check.
         if gpu_partition_size and disable_container_logging:
-            _LOGGER.warning(
-                "Cannot set both gpu_partition_size and disable_container_logging. disable_container_logging will be ignored."
-            )
-
+            _LOGGER.warning('Cannot set both gpu_partition_size and disable_container_logging. disable_container_logging will be ignored.')
         gca_endpoint = gca_endpoint_compat
         gca_machine_resources = gca_machine_resources_compat
         if gpu_partition_size:
             gca_machine_resources = gca_machine_resources_v1beta1_compat
             gca_endpoint = gca_endpoint_v1beta1_compat
-            api_client = api_client.select_version("v1beta1")
+            api_client = api_client.select_version('v1beta1')
         service_account = service_account or initializer.global_config.service_account
-
         if deployment_resource_pool:
-            deployed_model = gca_endpoint.DeployedModel(
-                model=model.versioned_resource_name,
-                display_name=deployed_model_display_name,
-                service_account=service_account,
-            )
+            deployed_model = gca_endpoint.DeployedModel(model=model.versioned_resource_name, display_name=deployed_model_display_name, service_account=service_account)
             if not gpu_partition_size:
-                deployed_model = gca_endpoint.DeployedModel(
-                    model=model.versioned_resource_name,
-                    display_name=deployed_model_display_name,
-                    service_account=service_account,
-                    disable_container_logging=disable_container_logging,
-                )
-
+                deployed_model = gca_endpoint.DeployedModel(model=model.versioned_resource_name, display_name=deployed_model_display_name, service_account=service_account, disable_container_logging=disable_container_logging)
             if system_labels:
                 deployed_model.system_labels = system_labels
-
-            supports_shared_resources = (
-                gca_model_compat.Model.DeploymentResourcesType.SHARED_RESOURCES
-                in model.supported_deployment_resources_types
-            )
-
+            supports_shared_resources = gca_model_compat.Model.DeploymentResourcesType.SHARED_RESOURCES in model.supported_deployment_resources_types
             if not supports_shared_resources:
-                raise ValueError(
-                    "`deployment_resource_pool` may only be specified for models "
-                    " which support shared resources."
-                )
-
-            provided_custom_machine_spec = (
-                machine_type
-                or accelerator_type
-                or accelerator_count
-                or autoscaling_target_accelerator_duty_cycle
-                or autoscaling_target_cpu_utilization
-                or autoscaling_target_request_count_per_minute
-                or autoscaling_target_pubsub_num_undelivered_messages
-                or autoscaling_pubsub_subscription_labels
-            )
-
+                raise ValueError('`deployment_resource_pool` may only be specified for models  which support shared resources.')
+            provided_custom_machine_spec = machine_type or accelerator_type or accelerator_count or autoscaling_target_accelerator_duty_cycle or autoscaling_target_cpu_utilization or autoscaling_target_request_count_per_minute or autoscaling_target_pubsub_num_undelivered_messages or autoscaling_pubsub_subscription_labels
             if provided_custom_machine_spec:
-                raise ValueError(
-                    "Conflicting parameters in deployment request. "
-                    "The machine_type, accelerator_type and accelerator_count, "
-                    "autoscaling_target_accelerator_duty_cycle, "
-                    "autoscaling_target_cpu_utilization, "
-                    "autoscaling_target_request_count_per_minute, "
-                    "autoscaling_target_pubsub_num_undelivered_messages, "
-                    "autoscaling_pubsub_subscription_labels parameters "
-                    "may not be set when `deployment_resource_pool` is "
-                    "specified."
-                )
-
+                raise ValueError('Conflicting parameters in deployment request. The machine_type, accelerator_type and accelerator_count, autoscaling_target_accelerator_duty_cycle, autoscaling_target_cpu_utilization, autoscaling_target_request_count_per_minute, autoscaling_target_pubsub_num_undelivered_messages, autoscaling_pubsub_subscription_labels parameters may not be set when `deployment_resource_pool` is specified.')
             deployed_model.shared_resources = deployment_resource_pool.resource_name
-
             if explanation_spec:
-                raise ValueError(
-                    "Model explanation is not supported for deployments using "
-                    "shared resources."
-                )
+                raise ValueError('Model explanation is not supported for deployments using shared resources.')
         else:
             max_replica_count = max(min_replica_count, max_replica_count)
-
             if bool(accelerator_type) != bool(accelerator_count):
-                raise ValueError(
-                    "Both `accelerator_type` and `accelerator_count` should be specified or None."
-                )
-
-            if autoscaling_target_accelerator_duty_cycle is not None and (
-                not accelerator_type or not accelerator_count
-            ):
-                raise ValueError(
-                    "Both `accelerator_type` and `accelerator_count` should be set "
-                    "when specifying autoscaling_target_accelerator_duty_cycle`"
-                )
-            deployed_model = gca_endpoint.DeployedModel(
-                model=model.versioned_resource_name,
-                display_name=deployed_model_display_name,
-                service_account=service_account,
-                enable_access_logging=enable_access_logging,
-            )
+                raise ValueError('Both `accelerator_type` and `accelerator_count` should be specified or None.')
+            if autoscaling_target_accelerator_duty_cycle is not None and (not accelerator_type or not accelerator_count):
+                raise ValueError('Both `accelerator_type` and `accelerator_count` should be set when specifying autoscaling_target_accelerator_duty_cycle`')
+            deployed_model = gca_endpoint.DeployedModel(model=model.versioned_resource_name, display_name=deployed_model_display_name, service_account=service_account, enable_access_logging=enable_access_logging)
             if not gpu_partition_size:
-                deployed_model = gca_endpoint.DeployedModel(
-                    model=model.versioned_resource_name,
-                    display_name=deployed_model_display_name,
-                    service_account=service_account,
-                    enable_access_logging=enable_access_logging,
-                    disable_container_logging=disable_container_logging,
-                )
-
+                deployed_model = gca_endpoint.DeployedModel(model=model.versioned_resource_name, display_name=deployed_model_display_name, service_account=service_account, enable_access_logging=enable_access_logging, disable_container_logging=disable_container_logging)
             if system_labels:
                 deployed_model.system_labels = system_labels
-
-            supports_automatic_resources = (
-                gca_model_compat.Model.DeploymentResourcesType.AUTOMATIC_RESOURCES
-                in model.supported_deployment_resources_types
-            )
-            supports_dedicated_resources = (
-                gca_model_compat.Model.DeploymentResourcesType.DEDICATED_RESOURCES
-                in model.supported_deployment_resources_types
-            )
-            provided_custom_machine_spec = (
-                machine_type
-                or accelerator_type
-                or accelerator_count
-                or autoscaling_target_accelerator_duty_cycle
-                or autoscaling_target_cpu_utilization
-                or autoscaling_target_request_count_per_minute
-                or autoscaling_target_pubsub_num_undelivered_messages
-                or autoscaling_pubsub_subscription_labels
-            )
-
-            # If the model supports both automatic and dedicated deployment resources,
-            # decide based on the presence of machine spec customizations
-            use_dedicated_resources = supports_dedicated_resources and (
-                not supports_automatic_resources or provided_custom_machine_spec
-            )
-
-            if provided_custom_machine_spec and not use_dedicated_resources:
-                _LOGGER.info(
-                    "Model does not support dedicated deployment resources. "
-                    "The machine_type, accelerator_type and accelerator_count, "
-                    "autoscaling_target_accelerator_duty_cycle, "
-                    "autoscaling_target_cpu_utilization, "
-                    "autoscaling_target_request_count_per_minute, "
-                    "autoscaling_target_pubsub_num_undelivered_messages, "
-                    "autoscaling_pubsub_subscription_labels parameters "
-                    "are ignored."
-                )
-
-            if use_dedicated_resources and not machine_type:
+            supports_automatic_resources = gca_model_compat.Model.DeploymentResourcesType.AUTOMATIC_RESOURCES in model.supported_deployment_resources_types
+            supports_dedicated_resources = gca_model_compat.Model.DeploymentResourcesType.DEDICATED_RESOURCES in model.supported_deployment_resources_types
+            provided_custom_machine_spec = machine_type or accelerator_type or accelerator_count or autoscaling_target_accelerator_duty_cycle or autoscaling_target_cpu_utilization or autoscaling_target_request_count_per_minute or autoscaling_target_pubsub_num_undelivered_messages or autoscaling_pubsub_subscription_labels
+            use_dedicated_resources = supports_dedicated_resources and (not supports_automatic_resources or provided_custom_machine_spec)
+            if provided_custom_machine_spec and (not use_dedicated_resources):
+                _LOGGER.info('Model does not support dedicated deployment resources. The machine_type, accelerator_type and accelerator_count, autoscaling_target_accelerator_duty_cycle, autoscaling_target_cpu_utilization, autoscaling_target_request_count_per_minute, autoscaling_target_pubsub_num_undelivered_messages, autoscaling_pubsub_subscription_labels parameters are ignored.')
+            if use_dedicated_resources and (not machine_type):
                 machine_type = _DEFAULT_MACHINE_TYPE
-                _LOGGER.info(f"Using default machine_type: {machine_type}")
-
+                _LOGGER.info(f'Using default machine_type: {machine_type}')
             if use_dedicated_resources:
-                dedicated_resources = gca_machine_resources.DedicatedResources(
-                    min_replica_count=min_replica_count,
-                    max_replica_count=max_replica_count,
-                    spot=spot,
-                    required_replica_count=required_replica_count,
-                )
-
-                machine_spec = gca_machine_resources.MachineSpec(
-                    machine_type=machine_type
-                )
-
+                dedicated_resources = gca_machine_resources.DedicatedResources(min_replica_count=min_replica_count, max_replica_count=max_replica_count, spot=spot, required_replica_count=required_replica_count)
+                machine_spec = gca_machine_resources.MachineSpec(machine_type=machine_type)
                 if autoscaling_target_cpu_utilization:
-                    autoscaling_metric_spec = gca_machine_resources.AutoscalingMetricSpec(
-                        metric_name="aiplatform.googleapis.com/prediction/online/cpu/utilization",
-                        target=autoscaling_target_cpu_utilization,
-                    )
-                    dedicated_resources.autoscaling_metric_specs.extend(
-                        [autoscaling_metric_spec]
-                    )
-
+                    autoscaling_metric_spec = gca_machine_resources.AutoscalingMetricSpec(metric_name='aiplatform.googleapis.com/prediction/online/cpu/utilization', target=autoscaling_target_cpu_utilization)
+                    dedicated_resources.autoscaling_metric_specs.extend([autoscaling_metric_spec])
                 if accelerator_type and accelerator_count:
                     utils.validate_accelerator_type(accelerator_type)
                     machine_spec.accelerator_type = accelerator_type
                     machine_spec.accelerator_count = accelerator_count
-
                     if autoscaling_target_accelerator_duty_cycle:
-                        autoscaling_metric_spec = gca_machine_resources.AutoscalingMetricSpec(
-                            metric_name="aiplatform.googleapis.com/prediction/online/accelerator/duty_cycle",
-                            target=autoscaling_target_accelerator_duty_cycle,
-                        )
-                        dedicated_resources.autoscaling_metric_specs.extend(
-                            [autoscaling_metric_spec]
-                        )
-
+                        autoscaling_metric_spec = gca_machine_resources.AutoscalingMetricSpec(metric_name='aiplatform.googleapis.com/prediction/online/accelerator/duty_cycle', target=autoscaling_target_accelerator_duty_cycle)
+                        dedicated_resources.autoscaling_metric_specs.extend([autoscaling_metric_spec])
                 if gpu_partition_size:
                     machine_spec.gpu_partition_size = gpu_partition_size
-
                 if autoscaling_target_request_count_per_minute:
-                    autoscaling_metric_spec = (
-                        gca_machine_resources.AutoscalingMetricSpec(
-                            metric_name=(
-                                "aiplatform.googleapis.com/prediction/online/"
-                                "request_count"
-                            ),
-                            target=autoscaling_target_request_count_per_minute,
-                        )
-                    )
-                    dedicated_resources.autoscaling_metric_specs.extend(
-                        [autoscaling_metric_spec]
-                    )
-
+                    autoscaling_metric_spec = gca_machine_resources.AutoscalingMetricSpec(metric_name='aiplatform.googleapis.com/prediction/online/request_count', target=autoscaling_target_request_count_per_minute)
+                    dedicated_resources.autoscaling_metric_specs.extend([autoscaling_metric_spec])
                 if autoscaling_target_pubsub_num_undelivered_messages:
-                    autoscaling_metric_spec = gca_machine_resources.AutoscalingMetricSpec(
-                        metric_name=(
-                            "pubsub.googleapis.com/subscription/"
-                            "num_undelivered_messages"
-                        ),
-                        target=autoscaling_target_pubsub_num_undelivered_messages,
-                        monitored_resource_labels=autoscaling_pubsub_subscription_labels,
-                    )
-                    dedicated_resources.autoscaling_metric_specs.extend(
-                        [autoscaling_metric_spec]
-                    )
-
+                    autoscaling_metric_spec = gca_machine_resources.AutoscalingMetricSpec(metric_name='pubsub.googleapis.com/subscription/num_undelivered_messages', target=autoscaling_target_pubsub_num_undelivered_messages, monitored_resource_labels=autoscaling_pubsub_subscription_labels)
+                    dedicated_resources.autoscaling_metric_specs.extend([autoscaling_metric_spec])
                 if reservation_affinity_type:
-                    machine_spec.reservation_affinity = utils.get_reservation_affinity(
-                        reservation_affinity_type,
-                        reservation_affinity_key,
-                        reservation_affinity_values,
-                    )
-
+                    machine_spec.reservation_affinity = utils.get_reservation_affinity(reservation_affinity_type, reservation_affinity_key, reservation_affinity_values)
                 if tpu_topology is not None:
                     machine_spec.tpu_topology = tpu_topology
-
                 dedicated_resources.machine_spec = machine_spec
                 deployed_model.dedicated_resources = dedicated_resources
                 if fast_tryout_enabled:
-                    deployed_model.faster_deployment_config = (
-                        gca_endpoint.FasterDeploymentConfig(
-                            fast_tryout_enabled=fast_tryout_enabled
-                        )
-                    )
-
+                    deployed_model.faster_deployment_config = gca_endpoint.FasterDeploymentConfig(fast_tryout_enabled=fast_tryout_enabled)
             elif supports_automatic_resources:
-                deployed_model.automatic_resources = (
-                    gca_machine_resources.AutomaticResources(
-                        min_replica_count=min_replica_count,
-                        max_replica_count=max_replica_count,
-                    )
-                )
+                deployed_model.automatic_resources = gca_machine_resources.AutomaticResources(min_replica_count=min_replica_count, max_replica_count=max_replica_count)
             else:
-                _LOGGER.warning(
-                    "Model does not support deployment. "
-                    "See https://cloud.google.com/vertex-ai/docs/reference/rpc/google.cloud.aiplatform.v1#google.cloud.aiplatform.v1.Model.FIELDS.repeated.google.cloud.aiplatform.v1.Model.DeploymentResourcesType.google.cloud.aiplatform.v1.Model.supported_deployment_resources_types"
-                )
-
+                _LOGGER.warning('Model does not support deployment. See https://cloud.google.com/vertex-ai/docs/reference/rpc/google.cloud.aiplatform.v1#google.cloud.aiplatform.v1.Model.FIELDS.repeated.google.cloud.aiplatform.v1.Model.DeploymentResourcesType.google.cloud.aiplatform.v1.Model.supported_deployment_resources_types')
             deployed_model.explanation_spec = explanation_spec
-
-        # Checking if traffic percentage is valid
-        # TODO(b/221059294) PrivateEndpoint should support traffic split
-        if traffic_split is None and not network:
-            # new model traffic needs to be 100 if no pre-existing models
+        if traffic_split is None and (not network):
             if not endpoint_resource_traffic_split:
-                # default scenario
                 if traffic_percentage == 0:
                     traffic_percentage = 100
-                # verify user specified 100
                 elif traffic_percentage < 100:
-                    raise ValueError(
-                        """There are currently no deployed models so the traffic
-                        percentage for this deployed model needs to be 100."""
-                    )
-            traffic_split = cls._allocate_traffic(
-                traffic_split=dict(endpoint_resource_traffic_split),
-                traffic_percentage=traffic_percentage,
-            )
-
-        operation_future = api_client.deploy_model(
-            endpoint=endpoint_resource_name,
-            deployed_model=deployed_model,
-            traffic_split=traffic_split,
-            metadata=metadata,
-            timeout=deploy_request_timeout,
-        )
-
-        _LOGGER.log_action_started_against_resource_with_lro(
-            "Deploy", "model", cls, operation_future
-        )
-
+                    raise ValueError('There are currently no deployed models so the traffic\n                        percentage for this deployed model needs to be 100.')
+            traffic_split = cls._allocate_traffic(traffic_split=dict(endpoint_resource_traffic_split), traffic_percentage=traffic_percentage)
+        operation_future = api_client.deploy_model(endpoint=endpoint_resource_name, deployed_model=deployed_model, traffic_split=traffic_split, metadata=metadata, timeout=deploy_request_timeout)
+        _LOGGER.log_action_started_against_resource_with_lro('Deploy', 'model', cls, operation_future)
         operation_future.result(timeout=None)
 
-    def undeploy(
-        self,
-        deployed_model_id: str,
-        traffic_split: Optional[Dict[str, int]] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        sync=True,
-    ) -> None:
+    def undeploy(self, deployed_model_id: str, traffic_split: Optional[Dict[str, int]]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), sync=True) -> None:
         """Undeploys a deployed model.
 
         The model to be undeployed should have no traffic or user must provide
@@ -2266,43 +1434,17 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 metadata.
         """
         self._sync_gca_resource_if_skipped()
-
         if traffic_split is not None:
             if deployed_model_id in traffic_split and traffic_split[deployed_model_id]:
-                raise ValueError("Model being undeployed should have 0 traffic.")
+                raise ValueError('Model being undeployed should have 0 traffic.')
             if sum(traffic_split.values()) != 100:
-                raise ValueError(
-                    "Sum of all traffic within traffic split needs to be 100."
-                )
-
-        # Two or more models deployed to Endpoint and remaining traffic will be zero
-        elif (
-            len(self.traffic_split) > 1
-            and deployed_model_id in self._gca_resource.traffic_split
-            and self._gca_resource.traffic_split[deployed_model_id] == 100
-        ):
-            raise ValueError(
-                f"Undeploying deployed model '{deployed_model_id}' would leave the remaining "
-                "traffic split at 0%. Traffic split must add up to 100% when models are "
-                "deployed. Please undeploy the other models first or provide an updated "
-                "traffic_split."
-            )
-
-        self._undeploy(
-            deployed_model_id=deployed_model_id,
-            traffic_split=traffic_split,
-            metadata=metadata,
-            sync=sync,
-        )
+                raise ValueError('Sum of all traffic within traffic split needs to be 100.')
+        elif len(self.traffic_split) > 1 and deployed_model_id in self._gca_resource.traffic_split and (self._gca_resource.traffic_split[deployed_model_id] == 100):
+            raise ValueError(f"Undeploying deployed model '{deployed_model_id}' would leave the remaining traffic split at 0%. Traffic split must add up to 100% when models are deployed. Please undeploy the other models first or provide an updated traffic_split.")
+        self._undeploy(deployed_model_id=deployed_model_id, traffic_split=traffic_split, metadata=metadata, sync=sync)
 
     @base.optional_sync()
-    def _undeploy(
-        self,
-        deployed_model_id: str,
-        traffic_split: Optional[Dict[str, int]] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        sync=True,
-    ) -> None:
+    def _undeploy(self, deployed_model_id: str, traffic_split: Optional[Dict[str, int]]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), sync=True) -> None:
         """Undeploys a deployed model.
 
         Proportionally adjusts the traffic_split among the remaining deployed
@@ -2326,44 +1468,17 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         """
         self._sync_gca_resource_if_skipped()
         current_traffic_split = traffic_split or dict(self._gca_resource.traffic_split)
-
         if deployed_model_id in current_traffic_split:
-            current_traffic_split = self._unallocate_traffic(
-                traffic_split=current_traffic_split,
-                deployed_model_id=deployed_model_id,
-            )
+            current_traffic_split = self._unallocate_traffic(traffic_split=current_traffic_split, deployed_model_id=deployed_model_id)
             current_traffic_split.pop(deployed_model_id)
-
-        _LOGGER.log_action_start_against_resource("Undeploying", "model", self)
-
-        operation_future = self.api_client.undeploy_model(
-            endpoint=self.resource_name,
-            deployed_model_id=deployed_model_id,
-            traffic_split=current_traffic_split,
-            metadata=metadata,
-        )
-
-        _LOGGER.log_action_started_against_resource_with_lro(
-            "Undeploy", "model", self.__class__, operation_future
-        )
-
-        # block before returning
+        _LOGGER.log_action_start_against_resource('Undeploying', 'model', self)
+        operation_future = self.api_client.undeploy_model(endpoint=self.resource_name, deployed_model_id=deployed_model_id, traffic_split=current_traffic_split, metadata=metadata)
+        _LOGGER.log_action_started_against_resource_with_lro('Undeploy', 'model', self.__class__, operation_future)
         operation_future.result()
-
-        _LOGGER.log_action_completed_against_resource("model", "undeployed", self)
-
-        # update local resource
+        _LOGGER.log_action_completed_against_resource('model', 'undeployed', self)
         self._sync_gca_resource()
 
-    def update(
-        self,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        labels: Optional[Dict[str, str]] = None,
-        traffic_split: Optional[Dict[str, int]] = None,
-        request_metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        update_request_timeout: Optional[float] = None,
-    ) -> "Endpoint":
+    def update(self, display_name: Optional[str]=None, description: Optional[str]=None, labels: Optional[Dict[str, str]]=None, traffic_split: Optional[Dict[str, int]]=None, request_metadata: Optional[Sequence[Tuple[str, str]]]=(), update_request_timeout: Optional[float]=None) -> 'Endpoint':
         """Updates an endpoint.
 
         Example usage:
@@ -2408,60 +1523,31 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         Raises:
             ValueError: If `labels` is not the correct format.
         """
-
         self.wait()
-
         current_endpoint_proto = self.gca_resource
         copied_endpoint_proto = current_endpoint_proto.__class__(current_endpoint_proto)
-
         update_mask: List[str] = []
-
         if display_name:
             utils.validate_display_name(display_name)
             copied_endpoint_proto.display_name = display_name
-            update_mask.append("display_name")
-
+            update_mask.append('display_name')
         if description:
             copied_endpoint_proto.description = description
-            update_mask.append("description")
-
+            update_mask.append('description')
         if labels:
             utils.validate_labels(labels)
             copied_endpoint_proto.labels = labels
-            update_mask.append("labels")
-
+            update_mask.append('labels')
         if traffic_split:
-            update_mask.append("traffic_split")
+            update_mask.append('traffic_split')
             copied_endpoint_proto.traffic_split = traffic_split
-
         update_mask = field_mask_pb2.FieldMask(paths=update_mask)
-
-        _LOGGER.log_action_start_against_resource(
-            "Updating",
-            "endpoint",
-            self,
-        )
-
-        self._gca_resource = self.api_client.update_endpoint(
-            endpoint=copied_endpoint_proto,
-            update_mask=update_mask,
-            metadata=request_metadata,
-            timeout=update_request_timeout,
-        )
-
-        _LOGGER.log_action_completed_against_resource("endpoint", "updated", self)
-
+        _LOGGER.log_action_start_against_resource('Updating', 'endpoint', self)
+        self._gca_resource = self.api_client.update_endpoint(endpoint=copied_endpoint_proto, update_mask=update_mask, metadata=request_metadata, timeout=update_request_timeout)
+        _LOGGER.log_action_completed_against_resource('endpoint', 'updated', self)
         return self
 
-    def predict(
-        self,
-        instances: List,
-        parameters: Optional[Dict] = None,
-        timeout: Optional[float] = None,
-        use_raw_predict: Optional[bool] = False,
-        *,
-        use_dedicated_endpoint: Optional[bool] = False,
-    ) -> Prediction:
+    def predict(self, instances: List, parameters: Optional[Dict]=None, timeout: Optional[float]=None, use_raw_predict: Optional[bool]=False, *, use_dedicated_endpoint: Optional[bool]=False) -> Prediction:
         """Make a prediction against this Endpoint.
 
         Example usage:
@@ -2508,116 +1594,47 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             ValueError: If the prediction request fails for dedicated endpoints.
         """
         self.wait()
-
         if parameters is not None:
-            data = json.dumps({"instances": instances, "parameters": parameters})
+            data = json.dumps({'instances': instances, 'parameters': parameters})
         else:
-            data = json.dumps({"instances": instances})
-
+            data = json.dumps({'instances': instances})
         if use_raw_predict:
-            raw_predict_response = self.raw_predict(
-                body=data,
-                headers={"Content-Type": "application/json"},
-                use_dedicated_endpoint=use_dedicated_endpoint,
-                timeout=timeout,
-            )
+            raw_predict_response = self.raw_predict(body=data, headers={'Content-Type': 'application/json'}, use_dedicated_endpoint=use_dedicated_endpoint, timeout=timeout)
             json_response = raw_predict_response.json()
-            return Prediction(
-                predictions=json_response["predictions"],
-                metadata=json_response.get("metadata"),
-                deployed_model_id=raw_predict_response.headers[
-                    _RAW_PREDICT_DEPLOYED_MODEL_ID_KEY
-                ],
-                model_resource_name=raw_predict_response.headers[
-                    _RAW_PREDICT_MODEL_RESOURCE_KEY
-                ],
-                model_version_id=raw_predict_response.headers.get(
-                    _RAW_PREDICT_MODEL_VERSION_ID_KEY, None
-                ),
-            )
-
+            return Prediction(predictions=json_response['predictions'], metadata=json_response.get('metadata'), deployed_model_id=raw_predict_response.headers[_RAW_PREDICT_DEPLOYED_MODEL_ID_KEY], model_resource_name=raw_predict_response.headers[_RAW_PREDICT_MODEL_RESOURCE_KEY], model_version_id=raw_predict_response.headers.get(_RAW_PREDICT_MODEL_VERSION_ID_KEY, None))
         if not self.dedicated_endpoint_enabled:
-            prediction_response = self._prediction_client.predict(
-                endpoint=self._gca_resource.name,
-                instances=instances,
-                parameters=parameters,
-                timeout=timeout,
-            )
+            prediction_response = self._prediction_client.predict(endpoint=self._gca_resource.name, instances=instances, parameters=parameters, timeout=timeout)
             if prediction_response._pb.metadata:
                 metadata = json_format.MessageToDict(prediction_response._pb.metadata)
             else:
                 metadata = None
-
-            return Prediction(
-                predictions=[
-                    json_format.MessageToDict(item)
-                    for item in prediction_response.predictions.pb
-                ],
-                metadata=metadata,
-                deployed_model_id=prediction_response.deployed_model_id,
-                model_version_id=prediction_response.model_version_id,
-                model_resource_name=prediction_response.model,
-            )
-
+            # Optimization: hoist MessageToDict and .pb attr access outside list-comp loop
+            preds_pb = prediction_response.predictions.pb
+            MessageToDict = json_format.MessageToDict
+            predictions = [MessageToDict(item) for item in preds_pb]
+            return Prediction(predictions=predictions, metadata=metadata, deployed_model_id=prediction_response.deployed_model_id, model_version_id=prediction_response.model_version_id, model_resource_name=prediction_response.model)
         if not self.dedicated_endpoint_dns:
-            raise ValueError(
-                "Dedicated endpoint DNS is empty. Please make sure endpoint"
-                "and model are ready before making a prediction."
-            )
-
+            raise ValueError('Dedicated endpoint DNS is empty. Please make sure endpointand model are ready before making a prediction.')
         if not self.authorized_session:
             self.credentials._scopes = constants.base.DEFAULT_AUTHED_SCOPES
-            self.authorized_session = google_auth_requests.AuthorizedSession(
-                self.credentials
-            )
-
+            self.authorized_session = google_auth_requests.AuthorizedSession(self.credentials)
         if timeout is not None and timeout > google_auth_requests._DEFAULT_TIMEOUT:
             try:
-                from requests_toolbelt.adapters.socket_options import (
-                    TCPKeepAliveAdapter,
-                )
+                from requests_toolbelt.adapters.socket_options import \
+                    TCPKeepAliveAdapter
             except ImportError:
-                raise ImportError(
-                    "Cannot import the requests-toolbelt library."
-                    "Please install requests-toolbelt."
-                )
-            # count * interval need to be larger than 1 hr (3600s)
+                raise ImportError('Cannot import the requests-toolbelt library.Please install requests-toolbelt.')
             keep_alive = TCPKeepAliveAdapter(idle=120, count=100, interval=100)
-            self.authorized_session.mount("https://", keep_alive)
-
-        url = f"https://{self.dedicated_endpoint_dns}/v1/{self.resource_name}:predict"
-        headers = {
-            "Content-Type": "application/json",
-        }
-        response = self.authorized_session.post(
-            url=url,
-            data=data,
-            headers=headers,
-            timeout=timeout,
-        )
-
+            self.authorized_session.mount('https://', keep_alive)
+        url = f'https://{self.dedicated_endpoint_dns}/v1/{self.resource_name}:predict'
+        headers = {'Content-Type': 'application/json'}
+        response = self.authorized_session.post(url=url, data=data, headers=headers, timeout=timeout)
         if response.status_code != 200:
-            raise ValueError(
-                f"Failed to make prediction request. Status code:"
-                f"{response.status_code}, response: {response.text}."
-            )
+            raise ValueError(f'Failed to make prediction request. Status code:{response.status_code}, response: {response.text}.')
         prediction_response = json.loads(response.text)
+        return Prediction(predictions=prediction_response.get('predictions'), metadata=prediction_response.get('metadata'), deployed_model_id=prediction_response.get('deployedModelId'), model_resource_name=prediction_response.get('model'), model_version_id=prediction_response.get('modelVersionId'))
 
-        return Prediction(
-            predictions=prediction_response.get("predictions"),
-            metadata=prediction_response.get("metadata"),
-            deployed_model_id=prediction_response.get("deployedModelId"),
-            model_resource_name=prediction_response.get("model"),
-            model_version_id=prediction_response.get("modelVersionId"),
-        )
-
-    async def predict_async(
-        self,
-        instances: List,
-        *,
-        parameters: Optional[Dict] = None,
-        timeout: Optional[float] = None,
-    ) -> Prediction:
+    async def predict_async(self, instances: List, *, parameters: Optional[Dict]=None, timeout: Optional[float]=None) -> Prediction:
         """Make an asynchronous prediction against this Endpoint.
         Example usage:
             ```
@@ -2652,37 +1669,14 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 Prediction with returned predictions and Model ID.
         """
         self.wait()
-
-        prediction_response = await self._prediction_async_client.predict(
-            endpoint=self._gca_resource.name,
-            instances=instances,
-            parameters=parameters,
-            timeout=timeout,
-        )
+        prediction_response = await self._prediction_async_client.predict(endpoint=self._gca_resource.name, instances=instances, parameters=parameters, timeout=timeout)
         if prediction_response._pb.metadata:
             metadata = json_format.MessageToDict(prediction_response._pb.metadata)
         else:
             metadata = None
+        return Prediction(predictions=[json_format.MessageToDict(item) for item in prediction_response.predictions.pb], metadata=metadata, deployed_model_id=prediction_response.deployed_model_id, model_version_id=prediction_response.model_version_id, model_resource_name=prediction_response.model)
 
-        return Prediction(
-            predictions=[
-                json_format.MessageToDict(item)
-                for item in prediction_response.predictions.pb
-            ],
-            metadata=metadata,
-            deployed_model_id=prediction_response.deployed_model_id,
-            model_version_id=prediction_response.model_version_id,
-            model_resource_name=prediction_response.model,
-        )
-
-    def raw_predict(
-        self,
-        body: bytes,
-        headers: Dict[str, str],
-        *,
-        use_dedicated_endpoint: Optional[bool] = False,
-        timeout: Optional[float] = None,
-    ) -> requests.models.Response:
+    def raw_predict(self, body: bytes, headers: Dict[str, str], *, use_dedicated_endpoint: Optional[bool]=False, timeout: Optional[float]=None) -> requests.models.Response:
         """Makes a prediction request using arbitrary headers.
 
         Example usage:
@@ -2712,46 +1706,24 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         """
         if not self.authorized_session:
             self.credentials._scopes = constants.base.DEFAULT_AUTHED_SCOPES
-            self.authorized_session = google_auth_requests.AuthorizedSession(
-                self.credentials
-            )
-
+            self.authorized_session = google_auth_requests.AuthorizedSession(self.credentials)
         if self.dedicated_endpoint_enabled:
             if not self.dedicated_endpoint_dns:
-                raise ValueError(
-                    "Dedicated endpoint DNS is empty. Please make sure endpoint"
-                    "and model are ready before making a prediction."
-                )
-            url = f"https://{self.dedicated_endpoint_dns}/v1/{self.resource_name}:rawPredict"
-
+                raise ValueError('Dedicated endpoint DNS is empty. Please make sure endpointand model are ready before making a prediction.')
+            url = f'https://{self.dedicated_endpoint_dns}/v1/{self.resource_name}:rawPredict'
             if timeout is not None and timeout > google_auth_requests._DEFAULT_TIMEOUT:
                 try:
-                    from requests_toolbelt.adapters.socket_options import (
-                        TCPKeepAliveAdapter,
-                    )
+                    from requests_toolbelt.adapters.socket_options import \
+                        TCPKeepAliveAdapter
                 except ImportError:
-                    raise ImportError(
-                        "Cannot import the requests-toolbelt library."
-                        "Please install requests-toolbelt."
-                    )
-                # count * interval need to be larger than 1 hr (3600s)
+                    raise ImportError('Cannot import the requests-toolbelt library.Please install requests-toolbelt.')
                 keep_alive = TCPKeepAliveAdapter(idle=120, count=100, interval=100)
-                self.authorized_session.mount("https://", keep_alive)
+                self.authorized_session.mount('https://', keep_alive)
         else:
-            url = f"https://{self.location}-{constants.base.API_BASE_PATH}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:rawPredict"
+            url = f'https://{self.location}-{constants.base.API_BASE_PATH}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:rawPredict'
+        return self.authorized_session.post(url=url, data=body, headers=headers, timeout=timeout)
 
-        return self.authorized_session.post(
-            url=url, data=body, headers=headers, timeout=timeout
-        )
-
-    def stream_raw_predict(
-        self,
-        body: bytes,
-        headers: Dict[str, str],
-        *,
-        use_dedicated_endpoint: Optional[bool] = False,
-        timeout: Optional[float] = None,
-    ) -> Iterator[requests.models.Response]:
+    def stream_raw_predict(self, body: bytes, headers: Dict[str, str], *, use_dedicated_endpoint: Optional[bool]=False, timeout: Optional[float]=None) -> Iterator[requests.models.Response]:
         """Makes a streaming prediction request using arbitrary headers.
         For custom model, this method is only supported for dedicated endpoint.
 
@@ -2784,36 +1756,18 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         """
         if not self.authorized_session:
             self.credentials._scopes = constants.base.DEFAULT_AUTHED_SCOPES
-            self.authorized_session = google_auth_requests.AuthorizedSession(
-                self.credentials
-            )
-
+            self.authorized_session = google_auth_requests.AuthorizedSession(self.credentials)
         if self.dedicated_endpoint_enabled:
             if not self.dedicated_endpoint_dns:
-                raise ValueError(
-                    "Dedicated endpoint DNS is empty. Please make sure endpoint"
-                    "and model are ready before making a prediction."
-                )
-            url = f"https://{self.dedicated_endpoint_dns}/v1/{self.resource_name}:streamRawPredict"
+                raise ValueError('Dedicated endpoint DNS is empty. Please make sure endpointand model are ready before making a prediction.')
+            url = f'https://{self.dedicated_endpoint_dns}/v1/{self.resource_name}:streamRawPredict'
         else:
-            url = f"https://{self.location}-{constants.base.API_BASE_PATH}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:streamRawPredict"
-
-        with self.authorized_session.post(
-            url=url,
-            data=body,
-            headers=headers,
-            timeout=timeout,
-            stream=True,
-        ) as resp:
+            url = f'https://{self.location}-{constants.base.API_BASE_PATH}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:streamRawPredict'
+        with self.authorized_session.post(url=url, data=body, headers=headers, timeout=timeout, stream=True) as resp:
             for line in resp.iter_lines():
                 yield line
 
-    def direct_predict(
-        self,
-        inputs: List,
-        parameters: Optional[Dict] = None,
-        timeout: Optional[float] = None,
-    ) -> Prediction:
+    def direct_predict(self, inputs: List, parameters: Optional[Dict]=None, timeout: Optional[float]=None) -> Prediction:
         """Makes a direct (gRPC) prediction against this Endpoint for a pre-built image.
 
         Args:
@@ -2843,34 +1797,10 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 The resulting prediction.
         """
         self.wait()
+        prediction_response = self._prediction_client.direct_predict(request={'endpoint': self._gca_resource.name, 'inputs': inputs, 'parameters': parameters}, timeout=timeout)
+        return Prediction(predictions=[json_format.MessageToDict(item) for item in prediction_response.outputs.pb], metadata=None, deployed_model_id=None, model_version_id=None, model_resource_name=None)
 
-        prediction_response = self._prediction_client.direct_predict(
-            request={
-                "endpoint": self._gca_resource.name,
-                "inputs": inputs,
-                "parameters": parameters,
-            },
-            timeout=timeout,
-        )
-
-        return Prediction(
-            predictions=[
-                json_format.MessageToDict(item)
-                for item in prediction_response.outputs.pb
-            ],
-            metadata=None,
-            deployed_model_id=None,
-            model_version_id=None,
-            model_resource_name=None,
-        )
-
-    async def direct_predict_async(
-        self,
-        inputs: List,
-        *,
-        parameters: Optional[Dict] = None,
-        timeout: Optional[float] = None,
-    ) -> Prediction:
+    async def direct_predict_async(self, inputs: List, *, parameters: Optional[Dict]=None, timeout: Optional[float]=None) -> Prediction:
         """Makes an asynchronous direct (gRPC) prediction against this Endpoint for a pre-built image.
 
         Example usage:
@@ -2906,33 +1836,10 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 The resulting prediction.
         """
         self.wait()
+        prediction_response = await self._prediction_async_client.direct_predict(request={'endpoint': self._gca_resource.name, 'inputs': inputs, 'parameters': parameters}, timeout=timeout)
+        return Prediction(predictions=[json_format.MessageToDict(item) for item in prediction_response.outputs.pb], metadata=None, deployed_model_id=None, model_version_id=None, model_resource_name=None)
 
-        prediction_response = await self._prediction_async_client.direct_predict(
-            request={
-                "endpoint": self._gca_resource.name,
-                "inputs": inputs,
-                "parameters": parameters,
-            },
-            timeout=timeout,
-        )
-
-        return Prediction(
-            predictions=[
-                json_format.MessageToDict(item)
-                for item in prediction_response.outputs.pb
-            ],
-            metadata=None,
-            deployed_model_id=None,
-            model_version_id=None,
-            model_resource_name=None,
-        )
-
-    def stream_direct_predict(
-        self,
-        inputs_iterator: Iterator[List],
-        parameters: Optional[Dict] = None,
-        timeout: Optional[float] = None,
-    ) -> Iterator[Prediction]:
+    def stream_direct_predict(self, inputs_iterator: Iterator[List], parameters: Optional[Dict]=None, timeout: Optional[float]=None) -> Iterator[Prediction]:
         """Makes a streaming direct (gRPC) prediction against this Endpoint for a pre-built image.
 
         Args:
@@ -2962,33 +1869,10 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 The resulting streamed predictions.
         """
         self.wait()
-        for resp in self._prediction_client.stream_direct_predict(
-            requests=(
-                {
-                    "endpoint": self._gca_resource.name,
-                    "inputs": inputs,
-                    "parameters": parameters,
-                }
-                for inputs in inputs_iterator
-            ),
-            timeout=timeout,
-        ):
-            yield Prediction(
-                predictions=[
-                    json_format.MessageToDict(item) for item in resp.outputs.pb
-                ],
-                metadata=None,
-                deployed_model_id=None,
-                model_version_id=None,
-                model_resource_name=None,
-            )
+        for resp in self._prediction_client.stream_direct_predict(requests=({'endpoint': self._gca_resource.name, 'inputs': inputs, 'parameters': parameters} for inputs in inputs_iterator), timeout=timeout):
+            yield Prediction(predictions=[json_format.MessageToDict(item) for item in resp.outputs.pb], metadata=None, deployed_model_id=None, model_version_id=None, model_resource_name=None)
 
-    def direct_raw_predict(
-        self,
-        method_name: str,
-        request: bytes,
-        timeout: Optional[float] = None,
-    ) -> Prediction:
+    def direct_raw_predict(self, method_name: str, request: bytes, timeout: Optional[float]=None) -> Prediction:
         """Makes a direct (gRPC) prediction request using arbitrary headers for a custom container.
 
         Example usage:
@@ -3011,30 +1895,10 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 The resulting prediction.
         """
         self.wait()
+        prediction_response = self._prediction_client.direct_raw_predict(request={'endpoint': self._gca_resource.name, 'method_name': method_name, 'input': request}, timeout=timeout)
+        return Prediction(predictions=prediction_response.output, metadata=None, deployed_model_id=None, model_version_id=None, model_resource_name=None)
 
-        prediction_response = self._prediction_client.direct_raw_predict(
-            request={
-                "endpoint": self._gca_resource.name,
-                "method_name": method_name,
-                "input": request,
-            },
-            timeout=timeout,
-        )
-
-        return Prediction(
-            predictions=prediction_response.output,
-            metadata=None,
-            deployed_model_id=None,
-            model_version_id=None,
-            model_resource_name=None,
-        )
-
-    async def direct_raw_predict_async(
-        self,
-        method_name: str,
-        request: bytes,
-        timeout: Optional[float] = None,
-    ) -> Prediction:
+    async def direct_raw_predict_async(self, method_name: str, request: bytes, timeout: Optional[float]=None) -> Prediction:
         """Makes a direct (gRPC) prediction request for a custom container.
 
         Example usage:
@@ -3057,30 +1921,10 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 The resulting prediction.
         """
         self.wait()
+        prediction_response = await self._prediction_async_client.direct_raw_predict(request={'endpoint': self._gca_resource.name, 'method_name': method_name, 'input': request}, timeout=timeout)
+        return Prediction(predictions=prediction_response.output, metadata=None, deployed_model_id=None, model_version_id=None, model_resource_name=None)
 
-        prediction_response = await self._prediction_async_client.direct_raw_predict(
-            request={
-                "endpoint": self._gca_resource.name,
-                "method_name": method_name,
-                "input": request,
-            },
-            timeout=timeout,
-        )
-
-        return Prediction(
-            predictions=prediction_response.output,
-            metadata=None,
-            deployed_model_id=None,
-            model_version_id=None,
-            model_resource_name=None,
-        )
-
-    def stream_direct_raw_predict(
-        self,
-        method_name: str,
-        requests: Iterator[bytes],
-        timeout: Optional[float] = None,
-    ) -> Iterator[Prediction]:
+    def stream_direct_raw_predict(self, method_name: str, requests: Iterator[bytes], timeout: Optional[float]=None) -> Iterator[Prediction]:
         """Makes a direct (gRPC) streaming prediction request for a custom container.
 
         Example usage:
@@ -3106,33 +1950,10 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 The resulting streamed predictions.
         """
         self.wait()
+        for resp in self._prediction_client.stream_direct_raw_predict(requests=({'endpoint': self._gca_resource.name, 'method_name': method_name, 'input': request} for request in requests), timeout=timeout):
+            yield Prediction(predictions=resp.output, metadata=None, deployed_model_id=None, model_version_id=None, model_resource_name=None)
 
-        for resp in self._prediction_client.stream_direct_raw_predict(
-            requests=(
-                {
-                    "endpoint": self._gca_resource.name,
-                    "method_name": method_name,
-                    "input": request,
-                }
-                for request in requests
-            ),
-            timeout=timeout,
-        ):
-            yield Prediction(
-                predictions=resp.output,
-                metadata=None,
-                deployed_model_id=None,
-                model_version_id=None,
-                model_resource_name=None,
-            )
-
-    def explain(
-        self,
-        instances: List[Dict],
-        parameters: Optional[Dict] = None,
-        deployed_model_id: Optional[str] = None,
-        timeout: Optional[float] = None,
-    ) -> Prediction:
+    def explain(self, instances: List[Dict], parameters: Optional[Dict]=None, deployed_model_id: Optional[str]=None, timeout: Optional[float]=None) -> Prediction:
         """Make a prediction with explanations against this Endpoint.
 
         Example usage:
@@ -3169,32 +1990,14 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 Prediction with returned predictions, explanations, and Model ID.
         """
         self.wait()
+        explain_response = self._prediction_client.explain(endpoint=self.resource_name, instances=instances, parameters=parameters, deployed_model_id=deployed_model_id, timeout=timeout)
+        # Optimization: hoist MessageToDict and .pb attribute outside the list-comprehension
+        preds_pb = explain_response.predictions.pb
+        MessageToDict = json_format.MessageToDict
+        predictions = [MessageToDict(item) for item in preds_pb]
+        return Prediction(predictions=predictions, deployed_model_id=explain_response.deployed_model_id, explanations=explain_response.explanations)
 
-        explain_response = self._prediction_client.explain(
-            endpoint=self.resource_name,
-            instances=instances,
-            parameters=parameters,
-            deployed_model_id=deployed_model_id,
-            timeout=timeout,
-        )
-
-        return Prediction(
-            predictions=[
-                json_format.MessageToDict(item)
-                for item in explain_response.predictions.pb
-            ],
-            deployed_model_id=explain_response.deployed_model_id,
-            explanations=explain_response.explanations,
-        )
-
-    async def explain_async(
-        self,
-        instances: List[Dict],
-        *,
-        parameters: Optional[Dict] = None,
-        deployed_model_id: Optional[str] = None,
-        timeout: Optional[float] = None,
-    ) -> Prediction:
+    async def explain_async(self, instances: List[Dict], *, parameters: Optional[Dict]=None, deployed_model_id: Optional[str]=None, timeout: Optional[float]=None) -> Prediction:
         """Make a prediction with explanations against this Endpoint.
 
         Example usage:
@@ -3233,33 +2036,10 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 Prediction with returned predictions, explanations, and Model ID.
         """
         self.wait()
+        explain_response = await self._prediction_async_client.explain(endpoint=self.resource_name, instances=instances, parameters=parameters, deployed_model_id=deployed_model_id, timeout=timeout)
+        return Prediction(predictions=[json_format.MessageToDict(item) for item in explain_response.predictions.pb], deployed_model_id=explain_response.deployed_model_id, explanations=explain_response.explanations)
 
-        explain_response = await self._prediction_async_client.explain(
-            endpoint=self.resource_name,
-            instances=instances,
-            parameters=parameters,
-            deployed_model_id=deployed_model_id,
-            timeout=timeout,
-        )
-
-        return Prediction(
-            predictions=[
-                json_format.MessageToDict(item)
-                for item in explain_response.predictions.pb
-            ],
-            deployed_model_id=explain_response.deployed_model_id,
-            explanations=explain_response.explanations,
-        )
-
-    def invoke(
-        self,
-        request_path: str,
-        body: bytes,
-        headers: Dict[str, str],
-        deployed_model_id: Optional[str] = None,
-        stream: bool = False,
-        timeout: Optional[float] = None,
-    ) -> Union[requests.models.Response, Iterator[requests.models.Response]]:
+    def invoke(self, request_path: str, body: bytes, headers: Dict[str, str], deployed_model_id: Optional[str]=None, stream: bool=False, timeout: Optional[float]=None) -> Union[requests.models.Response, Iterator[requests.models.Response]]:
         """Makes a prediction request for arbitrary paths.
 
         Example usage:
@@ -3332,79 +2112,42 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         """
         if not self.authorized_session:
             self.credentials._scopes = constants.base.DEFAULT_AUTHED_SCOPES
-            self.authorized_session = google_auth_requests.AuthorizedSession(
-                self.credentials
-            )
+            self.authorized_session = google_auth_requests.AuthorizedSession(self.credentials)
         if not self.dedicated_endpoint_enabled:
-            raise ValueError(
-                "Invoke method is only supported on dedicated endpoints. Please"
-                "make sure endpoint and model are correctly configured."
-            )
+            raise ValueError('Invoke method is only supported on dedicated endpoints. Pleasemake sure endpoint and model are correctly configured.')
         if self.dedicated_endpoint_dns is None:
-            raise ValueError(
-                "Dedicated endpoint DNS is empty. Please make sure endpoint"
-                "and model are ready before making a prediction."
-            )
-        if len(request_path) < 0 or request_path[0] != "/":
-            raise ValueError(
-                "container path must be a string that starts with a forward slash."
-            )
-        url = f"https://{self.dedicated_endpoint_dns}/v1/{self.resource_name}"
-
+            raise ValueError('Dedicated endpoint DNS is empty. Please make sure endpointand model are ready before making a prediction.')
+        if len(request_path) < 0 or request_path[0] != '/':
+            raise ValueError('container path must be a string that starts with a forward slash.')
+        url = f'https://{self.dedicated_endpoint_dns}/v1/{self.resource_name}'
         if deployed_model_id:
             deployed_model_ids = set()
-            if hasattr(self._gca_resource, "deployed_models"):
+            if hasattr(self._gca_resource, 'deployed_models'):
                 for deployed_model in self._gca_resource.deployed_models:
                     deployed_model_ids.add(deployed_model.id)
             if deployed_model_id not in deployed_model_ids:
-                raise ValueError(
-                    f"Deployed model {deployed_model_id} not found in endpoint"
-                    f" {self.name}."
-                )
-            url += f"/deployedModels/{deployed_model_id}"
-        url += "/invoke" + request_path
+                raise ValueError(f'Deployed model {deployed_model_id} not found in endpoint {self.name}.')
+            url += f'/deployedModels/{deployed_model_id}'
+        url += '/invoke' + request_path
         if timeout is not None and timeout > google_auth_requests._DEFAULT_TIMEOUT:
             try:
-                from requests_toolbelt.adapters.socket_options import (
-                    TCPKeepAliveAdapter,
-                )
+                from requests_toolbelt.adapters.socket_options import \
+                    TCPKeepAliveAdapter
             except ImportError:
-                raise ImportError(
-                    "Cannot import the requests-toolbelt library."
-                    "Please install requests-toolbelt."
-                )
-            # count * interval need to be larger than 1 hr (3600s)
+                raise ImportError('Cannot import the requests-toolbelt library.Please install requests-toolbelt.')
             keep_alive = TCPKeepAliveAdapter(idle=120, count=100, interval=100)
-            self.authorized_session.mount("https://", keep_alive)
+            self.authorized_session.mount('https://', keep_alive)
 
         def invoke_stream_response():
-            with self.authorized_session.post(
-                url=url,
-                data=body,
-                headers=headers,
-                timeout=timeout,
-                stream=True,
-            ) as resp:
+            with self.authorized_session.post(url=url, data=body, headers=headers, timeout=timeout, stream=True) as resp:
                 for line in resp.iter_lines():
                     yield line
-
         if stream:
-            # This wrapping allows a Response object is returned for
-            # non-streaming requests.
             return invoke_stream_response()
-        return self.authorized_session.post(
-            url=url, data=body, headers=headers, timeout=timeout
-        )
+        return self.authorized_session.post(url=url, data=body, headers=headers, timeout=timeout)
 
     @classmethod
-    def list(
-        cls,
-        filter: Optional[str] = None,
-        order_by: Optional[str] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ) -> List["models.Endpoint"]:
+    def list(cls, filter: Optional[str]=None, order_by: Optional[str]=None, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None) -> List['models.Endpoint']:
         """List all Endpoint resource instances.
 
         Example Usage:
@@ -3434,17 +2177,7 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             List[models.Endpoint]:
                 A list of Endpoint resource objects
         """
-
-        return cls._list_with_local_order(
-            cls_filter=lambda ep: not bool(ep.network)
-            and not bool(ep.private_service_connect_config),
-            # `network` is empty and private_service_connect is not enabled for public Endpoints
-            filter=filter,
-            order_by=order_by,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
+        return cls._list_with_local_order(cls_filter=lambda ep: not bool(ep.network) and (not bool(ep.private_service_connect_config)), filter=filter, order_by=order_by, project=project, location=location, credentials=credentials)
 
     def list_models(self) -> List[gca_endpoint_compat.DeployedModel]:
         """Returns a list of the models deployed to this Endpoint.
@@ -3456,7 +2189,7 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         self._sync_gca_resource()
         return list(self._gca_resource.deployed_models)
 
-    def undeploy_all(self, sync: bool = True) -> "Endpoint":
+    def undeploy_all(self, sync: bool=True) -> 'Endpoint':
         """Undeploys every model deployed to this Endpoint.
 
         Args:
@@ -3466,28 +2199,14 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 be immediately returned and synced when the Future has completed.
         """
         self._sync_gca_resource()
-
-        models_in_traffic_split = sorted(  # Undeploy zero traffic models first
-            self._gca_resource.traffic_split.keys(),
-            key=lambda id: self._gca_resource.traffic_split[id],
-        )
-
-        # Some deployed models may not in the traffic_split dict.
-        # These models have 0% traffic and should be undeployed first.
-        models_not_in_traffic_split = [
-            deployed_model.id
-            for deployed_model in self._gca_resource.deployed_models
-            if deployed_model.id not in models_in_traffic_split
-        ]
-
+        models_in_traffic_split = sorted(self._gca_resource.traffic_split.keys(), key=lambda id: self._gca_resource.traffic_split[id])
+        models_not_in_traffic_split = [deployed_model.id for deployed_model in self._gca_resource.deployed_models if deployed_model.id not in models_in_traffic_split]
         models_to_undeploy = models_not_in_traffic_split + models_in_traffic_split
-
         for deployed_model in models_to_undeploy:
             self._undeploy(deployed_model_id=deployed_model, sync=sync)
-
         return self
 
-    def delete(self, force: bool = False, sync: bool = True) -> None:
+    def delete(self, force: bool=False, sync: bool=True) -> None:
         """Deletes this Vertex AI Endpoint resource. If force is set to True,
         all models on this Endpoint will be undeployed prior to deletion.
 
@@ -3505,9 +2224,7 @@ class Endpoint(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         """
         if force:
             self.undeploy_all(sync=sync)
-
         super().delete(sync=sync)
-
 
 class PrivateEndpoint(Endpoint):
     """
@@ -3516,13 +2233,7 @@ class PrivateEndpoint(Endpoint):
     Read more [about private endpoints in the documentation.](https://cloud.google.com/vertex-ai/docs/predictions/using-private-endpoints)
     """
 
-    def __init__(
-        self,
-        endpoint_name: str,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ):
+    def __init__(self, endpoint_name: str, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None):
         """Retrieves a PrivateEndpoint resource.
 
         Example usage:
@@ -3558,23 +2269,11 @@ class PrivateEndpoint(Endpoint):
         try:
             import urllib3
         except ImportError:
-            raise ImportError(
-                "Cannot import the urllib3 HTTP client. Please install google-cloud-aiplatform[private_endpoints]."
-            )
-
-        super().__init__(
-            endpoint_name=endpoint_name,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
-
-        if not self.network and not self.private_service_connect_config:
-            raise ValueError(
-                "Please ensure the Endpoint being retrieved is a PrivateEndpoint."
-            )
-
-        self._http_client = urllib3.PoolManager(cert_reqs="CERT_NONE")
+            raise ImportError('Cannot import the urllib3 HTTP client. Please install google-cloud-aiplatform[private_endpoints].')
+        super().__init__(endpoint_name=endpoint_name, project=project, location=location, credentials=credentials)
+        if not self.network and (not self.private_service_connect_config):
+            raise ValueError('Please ensure the Endpoint being retrieved is a PrivateEndpoint.')
+        self._http_client = urllib3.PoolManager(cert_reqs='CERT_NONE')
         self._authorized_session = None
 
     @property
@@ -3598,19 +2297,11 @@ class PrivateEndpoint(Endpoint):
             return None
         return self._gca_resource.deployed_models[0].private_endpoints.health_http_uri
 
-    # PrivateServiceConnectConfig is deprecated.
-    # Use service_networking.PrivateServiceConnectConfig instead.
     class PrivateServiceConnectConfig:
         """Represents a Vertex AI PrivateServiceConnectConfig resource."""
+        _gapic_private_service_connect_config: gca_service_networking.PrivateServiceConnectConfig
 
-        _gapic_private_service_connect_config: (
-            gca_service_networking.PrivateServiceConnectConfig
-        )
-
-        def __init__(
-            self,
-            project_allowlist: Optional[Sequence[str]] = None,
-        ):
+        def __init__(self, project_allowlist: Optional[Sequence[str]]=None):
             """PrivateServiceConnectConfig for a PrivateEndpoint.
 
             Args:
@@ -3619,34 +2310,10 @@ class PrivateEndpoint(Endpoint):
                     by the endpoint via [ServiceAttachment](https://cloud.google.com/vpc/docs/private-service-connect#service-attachments).
                     If not set, the endpoint's project will be used.
             """
-            self._gapic_private_service_connect_config = (
-                gca_service_networking.PrivateServiceConnectConfig(
-                    enable_private_service_connect=True,
-                    project_allowlist=project_allowlist,
-                )
-            )
+            self._gapic_private_service_connect_config = gca_service_networking.PrivateServiceConnectConfig(enable_private_service_connect=True, project_allowlist=project_allowlist)
 
     @classmethod
-    def create(
-        cls,
-        display_name: str,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        network: Optional[str] = None,
-        description: Optional[str] = None,
-        labels: Optional[Dict[str, str]] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        sync=True,
-        private_service_connect_config: Union[
-            Optional[PrivateServiceConnectConfig],
-            Optional[gca_service_networking.PrivateServiceConnectConfig],
-        ] = None,
-        enable_request_response_logging=False,
-        request_response_logging_sampling_rate: Optional[float] = None,
-        request_response_logging_bq_destination_table: Optional[str] = None,
-        inference_timeout: Optional[int] = None,
-    ) -> "PrivateEndpoint":
+    def create(cls, display_name: str, project: Optional[str]=None, location: Optional[str]=None, network: Optional[str]=None, description: Optional[str]=None, labels: Optional[Dict[str, str]]=None, credentials: Optional[auth_credentials.Credentials]=None, encryption_spec_key_name: Optional[str]=None, sync=True, private_service_connect_config: Union[Optional[PrivateServiceConnectConfig], Optional[gca_service_networking.PrivateServiceConnectConfig]]=None, enable_request_response_logging=False, request_response_logging_sampling_rate: Optional[float]=None, request_response_logging_bq_destination_table: Optional[str]=None, inference_timeout: Optional[int]=None) -> 'PrivateEndpoint':
         """Creates a new PrivateEndpoint.
 
         Example usage:
@@ -3747,83 +2414,32 @@ class PrivateEndpoint(Endpoint):
             PrivateEndpoint.
         """
         api_client = cls._instantiate_client(location=location, credentials=credentials)
-
         utils.validate_display_name(display_name)
         if labels:
             utils.validate_labels(labels)
-
         project = project or initializer.global_config.project
         location = location or initializer.global_config.location
         network = network or initializer.global_config.network
-
-        if not network and not private_service_connect_config:
-            raise ValueError(
-                "Please provide required argument `network` or"
-                "`private_service_connect_config`. You can also set network"
-                "using aiplatform.init(network=...)"
-            )
+        if not network and (not private_service_connect_config):
+            raise ValueError('Please provide required argument `network` or`private_service_connect_config`. You can also set networkusing aiplatform.init(network=...)')
         if network and private_service_connect_config:
-            raise ValueError(
-                "Argument `network` and `private_service_connect_config` enabled"
-                " mutually exclusive. You can only set one of them."
-            )
-
+            raise ValueError('Argument `network` and `private_service_connect_config` enabled mutually exclusive. You can only set one of them.')
         config = None
         if private_service_connect_config:
-            if hasattr(
-                private_service_connect_config,
-                "_gapic_private_service_connect_config",
-            ):
-                config = (
-                    private_service_connect_config._gapic_private_service_connect_config
-                )
+            if hasattr(private_service_connect_config, '_gapic_private_service_connect_config'):
+                config = private_service_connect_config._gapic_private_service_connect_config
             else:
                 config = private_service_connect_config
-
         predict_request_response_logging_config = None
         if enable_request_response_logging:
-            predict_request_response_logging_config = (
-                gca_endpoint_compat.PredictRequestResponseLoggingConfig(
-                    enabled=True,
-                    sampling_rate=request_response_logging_sampling_rate,
-                    bigquery_destination=gca_io_compat.BigQueryDestination(
-                        output_uri=request_response_logging_bq_destination_table
-                    ),
-                )
-            )
-
+            predict_request_response_logging_config = gca_endpoint_compat.PredictRequestResponseLoggingConfig(enabled=True, sampling_rate=request_response_logging_sampling_rate, bigquery_destination=gca_io_compat.BigQueryDestination(output_uri=request_response_logging_bq_destination_table))
         client_connection_config = None
         if private_service_connect_config and inference_timeout:
-            client_connection_config = gca_endpoint_compat.ClientConnectionConfig(
-                inference_timeout=duration_pb2.Duration(seconds=inference_timeout)
-            )
-
-        return cls._create(
-            api_client=api_client,
-            display_name=display_name,
-            project=project,
-            location=location,
-            description=description,
-            labels=labels,
-            credentials=credentials,
-            encryption_spec=initializer.global_config.get_encryption_spec(
-                encryption_spec_key_name=encryption_spec_key_name
-            ),
-            network=network,
-            sync=sync,
-            private_service_connect_config=config,
-            predict_request_response_logging_config=predict_request_response_logging_config,
-            client_connection_config=client_connection_config,
-        )
+            client_connection_config = gca_endpoint_compat.ClientConnectionConfig(inference_timeout=duration_pb2.Duration(seconds=inference_timeout))
+        return cls._create(api_client=api_client, display_name=display_name, project=project, location=location, description=description, labels=labels, credentials=credentials, encryption_spec=initializer.global_config.get_encryption_spec(encryption_spec_key_name=encryption_spec_key_name), network=network, sync=sync, private_service_connect_config=config, predict_request_response_logging_config=predict_request_response_logging_config, client_connection_config=client_connection_config)
 
     @classmethod
-    def _construct_sdk_resource_from_gapic(
-        cls,
-        gapic_resource: proto.Message,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ) -> "PrivateEndpoint":
+    def _construct_sdk_resource_from_gapic(cls, gapic_resource: proto.Message, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None) -> 'PrivateEndpoint':
         """Given a GAPIC PrivateEndpoint object, return the SDK representation.
 
         Args:
@@ -3850,29 +2466,13 @@ class PrivateEndpoint(Endpoint):
         try:
             import urllib3
         except ImportError:
-            raise ImportError(
-                "Cannot import the urllib3 HTTP client. Please install google-cloud-aiplatform[private_endpoints]."
-            )
-
-        endpoint = super()._construct_sdk_resource_from_gapic(
-            gapic_resource=gapic_resource,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
-
-        endpoint._http_client = urllib3.PoolManager(cert_reqs="CERT_NONE")
+            raise ImportError('Cannot import the urllib3 HTTP client. Please install google-cloud-aiplatform[private_endpoints].')
+        endpoint = super()._construct_sdk_resource_from_gapic(gapic_resource=gapic_resource, project=project, location=location, credentials=credentials)
+        endpoint._http_client = urllib3.PoolManager(cert_reqs='CERT_NONE')
         endpoint._authorized_session = None
-
         return endpoint
 
-    def _http_request(
-        self,
-        method: str,
-        url: str,
-        body: Optional[Dict[Any, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-    ) -> "urllib3.response.HTTPResponse":  # type: ignore # noqa: F821
+    def _http_request(self, method: str, url: str, body: Optional[Dict[Any, Any]]=None, headers: Optional[Dict[str, str]]=None) -> 'urllib3.response.HTTPResponse':
         """Helper function used to perform HTTP requests for PrivateEndpoint.
 
         Args:
@@ -3899,41 +2499,21 @@ class PrivateEndpoint(Endpoint):
         try:
             import urllib3
         except ImportError:
-            raise ImportError(
-                "Cannot import the urllib3 HTTP client. Please install google-cloud-aiplatform[private_endpoints]."
-            )
-
+            raise ImportError('Cannot import the urllib3 HTTP client. Please install google-cloud-aiplatform[private_endpoints].')
         try:
-            response = self._http_client.request(
-                method=method, url=url, body=body, headers=headers
-            )
-
+            response = self._http_client.request(method=method, url=url, body=body, headers=headers)
             if response.status < _SUCCESSFUL_HTTP_RESPONSE:
                 return response
             else:
-                raise RuntimeError(
-                    f"{response.status} - Failed to make request, see response: "
-                    + response.data.decode("utf-8")
-                )
-
+                raise RuntimeError(f'{response.status} - Failed to make request, see response: ' + response.data.decode('utf-8'))
         except urllib3.exceptions.MaxRetryError as exc:
-            raise RuntimeError(
-                f"Failed to make a {method} request to this URI, make sure: "
-                " this call is being made inside the network this PrivateEndpoint is peered to "
-                f"({self._gca_resource.network}), calling health_check() returns True, "
-                f"and that {url} is a valid URL."
-            ) from exc
+            raise RuntimeError(f'Failed to make a {method} request to this URI, make sure:  this call is being made inside the network this PrivateEndpoint is peered to ({self._gca_resource.network}), calling health_check() returns True, and that {url} is a valid URL.') from exc
 
     def _validate_endpoint_override(self, endpoint_override: str) -> bool:
-        regex = re.compile("^[a-zA-Z0-9-.]+$")
+        regex = re.compile('^[a-zA-Z0-9-.]+$')
         return regex.match(endpoint_override) is not None
 
-    def predict(
-        self,
-        instances: List,
-        parameters: Optional[Dict] = None,
-        endpoint_override: Optional[str] = None,
-    ) -> Prediction:
+    def predict(self, instances: List, parameters: Optional[Dict]=None, endpoint_override: Optional[str]=None) -> Prediction:
         """Make a prediction against this PrivateEndpoint using a HTTP request.
         For PSA based private endpoint, this method must be called within the
         network the PrivateEndpoint is peered to. Otherwise, the predict() call
@@ -4000,81 +2580,33 @@ class PrivateEndpoint(Endpoint):
         """
         self.wait()
         self._sync_gca_resource_if_skipped()
-
         if self.network:
             if not self._gca_resource.deployed_models:
-                raise RuntimeError(
-                    "Cannot make a predict request because a model has not been"
-                    "deployed on this Private Endpoint. Please ensure a model"
-                    "has been deployed."
-                )
-            response = self._http_request(
-                method="POST",
-                url=self.predict_http_uri,
-                body=json.dumps({"instances": instances, "parameters": parameters}),
-                headers={"Content-Type": "application/json"},
-            )
+                raise RuntimeError('Cannot make a predict request because a model has not beendeployed on this Private Endpoint. Please ensure a modelhas been deployed.')
+            response = self._http_request(method='POST', url=self.predict_http_uri, body=json.dumps({'instances': instances, 'parameters': parameters}), headers={'Content-Type': 'application/json'})
             prediction_response = json.loads(response.data)
-
-            return Prediction(
-                predictions=prediction_response.get("predictions"),
-                metadata=prediction_response.get("metadata"),
-                deployed_model_id=self._gca_resource.deployed_models[0].id,
-            )
-
+            return Prediction(predictions=prediction_response.get('predictions'), metadata=prediction_response.get('metadata'), deployed_model_id=self._gca_resource.deployed_models[0].id)
         if self.private_service_connect_config:
             if not endpoint_override:
-                raise ValueError(
-                    "Cannot make a predict request because endpoint override is"
-                    "not provided. Please ensure an endpoint override is"
-                    "provided."
-                )
+                raise ValueError('Cannot make a predict request because endpoint override isnot provided. Please ensure an endpoint override isprovided.')
             if not self._validate_endpoint_override(endpoint_override):
-                raise ValueError(
-                    "Invalid endpoint override provided. Please only use IP"
-                    "address or DNS."
-                )
-
+                raise ValueError('Invalid endpoint override provided. Please only use IPaddress or DNS.')
             if not self._authorized_session:
                 self.credentials._scopes = constants.base.DEFAULT_AUTHED_SCOPES
-                self._authorized_session = google_auth_requests.AuthorizedSession(
-                    self.credentials,
-                )
+                self._authorized_session = google_auth_requests.AuthorizedSession(self.credentials)
                 self._authorized_session.verify = False
-
             if parameters:
-                data = json.dumps({"instances": instances, "parameters": parameters})
+                data = json.dumps({'instances': instances, 'parameters': parameters})
             else:
-                data = json.dumps({"instances": instances})
-
-            url = f"https://{endpoint_override}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:predict"
-            response = self._authorized_session.post(
-                url=url,
-                data=data,
-                headers={"Content-Type": "application/json"},
-            )
-
+                data = json.dumps({'instances': instances})
+            url = f'https://{endpoint_override}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:predict'
+            response = self._authorized_session.post(url=url, data=data, headers={'Content-Type': 'application/json'})
             if response.status_code != 200:
-                raise ValueError(
-                    f"Failed to make prediction request. Status code:"
-                    f"{response.status_code}, response: {response.text}."
-                )
+                raise ValueError(f'Failed to make prediction request. Status code:{response.status_code}, response: {response.text}.')
             prediction_response = json.loads(response.text)
+            return Prediction(predictions=prediction_response.get('predictions'), metadata=prediction_response.get('metadata'), deployed_model_id=prediction_response.get('deployedModelId'), model_resource_name=prediction_response.get('model'), model_version_id=prediction_response.get('modelVersionId'))
 
-            return Prediction(
-                predictions=prediction_response.get("predictions"),
-                metadata=prediction_response.get("metadata"),
-                deployed_model_id=prediction_response.get("deployedModelId"),
-                model_resource_name=prediction_response.get("model"),
-                model_version_id=prediction_response.get("modelVersionId"),
-            )
-
-    def raw_predict(
-        self,
-        body: bytes,
-        headers: Dict[str, str],
-        endpoint_override: Optional[str] = None,
-    ) -> requests.models.Response:
+    def raw_predict(self, body: bytes, headers: Dict[str, str], endpoint_override: Optional[str]=None) -> requests.models.Response:
         """Make a prediction request using arbitrary headers.
         This method must be called within the network the PrivateEndpoint is peered to.
         Otherwise, the predict() call will fail with error code 404. To check, use `PrivateEndpoint.network`.
@@ -4120,46 +2652,20 @@ class PrivateEndpoint(Endpoint):
         """
         self.wait()
         if self.network:
-            return self._http_request(
-                method="POST",
-                url=self.predict_http_uri,
-                body=body,
-                headers=headers,
-            )
-
+            return self._http_request(method='POST', url=self.predict_http_uri, body=body, headers=headers)
         if self.private_service_connect_config:
             if not endpoint_override:
-                raise ValueError(
-                    "Cannot make a predict request because endpoint override is"
-                    "not provided. Please ensure an endpoint override is"
-                    "provided."
-                )
+                raise ValueError('Cannot make a predict request because endpoint override isnot provided. Please ensure an endpoint override isprovided.')
             if not self._validate_endpoint_override(endpoint_override):
-                raise ValueError(
-                    "Invalid endpoint override provided. Please only use IP"
-                    "address or DNS."
-                )
-
+                raise ValueError('Invalid endpoint override provided. Please only use IPaddress or DNS.')
             if not self._authorized_session:
                 self.credentials._scopes = constants.base.DEFAULT_AUTHED_SCOPES
-                self._authorized_session = google_auth_requests.AuthorizedSession(
-                    self.credentials,
-                )
+                self._authorized_session = google_auth_requests.AuthorizedSession(self.credentials)
                 self._authorized_session.verify = False
+            url = f'https://{endpoint_override}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:rawPredict'
+            return self._authorized_session.post(url=url, body=body, headers=headers)
 
-            url = f"https://{endpoint_override}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:rawPredict"
-            return self._authorized_session.post(
-                url=url,
-                body=body,
-                headers=headers,
-            )
-
-    def stream_raw_predict(
-        self,
-        body: bytes,
-        headers: Dict[str, str],
-        endpoint_override: Optional[str] = None,
-    ) -> Iterator[bytes]:
+    def stream_raw_predict(self, body: bytes, headers: Dict[str, str], endpoint_override: Optional[str]=None) -> Iterator[bytes]:
         """Make a streaming prediction request using arbitrary headers.
 
         Example usage:
@@ -4203,56 +2709,25 @@ class PrivateEndpoint(Endpoint):
         """
         self.wait()
         if self.network or not self.private_service_connect_config:
-            raise ValueError(
-                "PSA based private endpoint does not support streaming prediction."
-            )
-
+            raise ValueError('PSA based private endpoint does not support streaming prediction.')
         if self.private_service_connect_config:
             if not endpoint_override:
-                raise ValueError(
-                    "Cannot make a predict request because endpoint override is"
-                    "not provided. Please ensure an endpoint override is"
-                    "provided."
-                )
+                raise ValueError('Cannot make a predict request because endpoint override isnot provided. Please ensure an endpoint override isprovided.')
             if not self._validate_endpoint_override(endpoint_override):
-                raise ValueError(
-                    "Invalid endpoint override provided. Please only use IP"
-                    "address or DNS."
-                )
-
+                raise ValueError('Invalid endpoint override provided. Please only use IPaddress or DNS.')
             if not self._authorized_session:
                 self.credentials._scopes = constants.base.DEFAULT_AUTHED_SCOPES
-                self._authorized_session = google_auth_requests.AuthorizedSession(
-                    self.credentials,
-                )
+                self._authorized_session = google_auth_requests.AuthorizedSession(self.credentials)
                 self._authorized_session.verify = False
-
-            url = f"https://{endpoint_override}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:streamRawPredict"
-            with self._authorized_session.post(
-                url=url,
-                data=body,
-                headers=headers,
-                stream=True,
-                verify=False,
-            ) as resp:
+            url = f'https://{endpoint_override}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}:streamRawPredict'
+            with self._authorized_session.post(url=url, data=body, headers=headers, stream=True, verify=False) as resp:
                 for line in resp.iter_lines():
                     yield line
 
     def explain(self):
-        raise NotImplementedError(
-            f"{self.__class__.__name__} class does not support 'explain' as of now."
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} class does not support 'explain' as of now.")
 
-    def invoke(
-        self,
-        request_path: str,
-        body: bytes,
-        headers: Dict[str, str],
-        deployed_model_id: Optional[str] = None,
-        stream: bool = False,
-        timeout: Optional[float] = None,
-        endpoint_override: Optional[str] = None,
-    ) -> Iterator[bytes]:
+    def invoke(self, request_path: str, body: bytes, headers: Dict[str, str], deployed_model_id: Optional[str]=None, stream: bool=False, timeout: Optional[float]=None, endpoint_override: Optional[str]=None) -> Iterator[bytes]:
         """Makes a prediction request for arbitrary paths.
 
         Example usage:
@@ -4310,64 +2785,36 @@ class PrivateEndpoint(Endpoint):
         """
         self.wait()
         if self.network or not self.private_service_connect_config:
-            raise ValueError("PSA based private endpoint does not support invoke.")
-
+            raise ValueError('PSA based private endpoint does not support invoke.')
         if self.private_service_connect_config:
             if not endpoint_override:
-                raise ValueError(
-                    "Cannot make an invoke request because endpoint override is"
-                    "not provided. Please ensure an endpoint override is"
-                    "provided."
-                )
+                raise ValueError('Cannot make an invoke request because endpoint override isnot provided. Please ensure an endpoint override isprovided.')
             if not self._validate_endpoint_override(endpoint_override):
-                raise ValueError(
-                    "Invalid endpoint override provided. Please only use IP"
-                    "address or DNS."
-                )
-
+                raise ValueError('Invalid endpoint override provided. Please only use IPaddress or DNS.')
             if not self._authorized_session:
                 self.credentials._scopes = constants.base.DEFAULT_AUTHED_SCOPES
-                self._authorized_session = google_auth_requests.AuthorizedSession(
-                    self.credentials,
-                )
+                self._authorized_session = google_auth_requests.AuthorizedSession(self.credentials)
                 self._authorized_session.verify = False
-            if len(request_path) < 0 or request_path[0] != "/":
-                raise ValueError(
-                    "container path must be a string that starts with a forward slash."
-                )
-
-            url = f"https://{endpoint_override}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}"
+            if len(request_path) < 0 or request_path[0] != '/':
+                raise ValueError('container path must be a string that starts with a forward slash.')
+            url = f'https://{endpoint_override}/v1/projects/{self.project}/locations/{self.location}/endpoints/{self.name}'
             if deployed_model_id:
                 deployed_model_ids = set()
-                if hasattr(self._gca_resource, "deployed_models"):
+                if hasattr(self._gca_resource, 'deployed_models'):
                     for deployed_model in self._gca_resource.deployed_models:
                         deployed_model_ids.add(deployed_model.id)
                 if deployed_model_id not in deployed_model_ids:
-                    raise ValueError(
-                        f"Deployed model {deployed_model_id} not found in endpoint"
-                        f" {self.name}."
-                    )
-                url += f"/deployedModels/{deployed_model_id}"
-            url += "/invoke" + request_path
+                    raise ValueError(f'Deployed model {deployed_model_id} not found in endpoint {self.name}.')
+                url += f'/deployedModels/{deployed_model_id}'
+            url += '/invoke' + request_path
 
             def invoke_stream_response():
-                with self._authorized_session.post(
-                    url=url,
-                    data=body,
-                    headers=headers,
-                    timeout=timeout,
-                    stream=True,
-                ) as resp:
+                with self._authorized_session.post(url=url, data=body, headers=headers, timeout=timeout, stream=True) as resp:
                     for line in resp.iter_lines():
                         yield line
-
             if stream:
-                # This wrapping allows a Response object is returned for
-                # non-streaming requests.
                 return invoke_stream_response()
-            return self._authorized_session.post(
-                url=url, data=body, headers=headers, timeout=timeout
-            )
+            return self._authorized_session.post(url=url, data=body, headers=headers, timeout=timeout)
 
     def health_check(self) -> bool:
         """
@@ -4389,34 +2836,15 @@ class PrivateEndpoint(Endpoint):
         """
         self.wait()
         self._sync_gca_resource_if_skipped()
-
         if self.private_service_connect_config:
-            raise RuntimeError(
-                "Health check request is not supported on PSC based Private Endpoint."
-            )
-
+            raise RuntimeError('Health check request is not supported on PSC based Private Endpoint.')
         if not self._gca_resource.deployed_models:
-            raise RuntimeError(
-                "Cannot make a health check request because a model has not been deployed on this Private"
-                "Endpoint. Please ensure a model has been deployed."
-            )
-
-        response = self._http_request(
-            method="GET",
-            url=self.health_http_uri,
-        )
-
+            raise RuntimeError('Cannot make a health check request because a model has not been deployed on this PrivateEndpoint. Please ensure a model has been deployed.')
+        response = self._http_request(method='GET', url=self.health_http_uri)
         return response.status < _SUCCESSFUL_HTTP_RESPONSE
 
     @classmethod
-    def list(
-        cls,
-        filter: Optional[str] = None,
-        order_by: Optional[str] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ) -> List["models.PrivateEndpoint"]:
+    def list(cls, filter: Optional[str]=None, order_by: Optional[str]=None, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None) -> List['models.PrivateEndpoint']:
         """List all PrivateEndpoint resource instances.
 
         Example Usage:
@@ -4450,51 +2878,9 @@ class PrivateEndpoint(Endpoint):
             List[models.PrivateEndpoint]:
                 A list of PrivateEndpoint resource objects.
         """
+        return cls._list_with_local_order(cls_filter=lambda ep: bool(ep.network) or bool(ep.private_service_connect_config), filter=filter, order_by=order_by, project=project, location=location, credentials=credentials)
 
-        return cls._list_with_local_order(
-            cls_filter=lambda ep: bool(ep.network)
-            or bool(ep.private_service_connect_config),
-            # Only PrivateEndpoints have a network or private_service_connect_config
-            filter=filter,
-            order_by=order_by,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
-
-    def deploy(
-        self,
-        model: "Model",
-        deployed_model_display_name: Optional[str] = None,
-        machine_type: Optional[str] = None,
-        min_replica_count: int = 1,
-        max_replica_count: int = 1,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        gpu_partition_size: Optional[str] = None,
-        tpu_topology: Optional[str] = None,
-        service_account: Optional[str] = None,
-        explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata] = None,
-        explanation_parameters: Optional[
-            aiplatform.explain.ExplanationParameters
-        ] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        sync=True,
-        disable_container_logging: bool = False,
-        traffic_percentage: Optional[int] = 0,
-        traffic_split: Optional[Dict[str, int]] = None,
-        reservation_affinity_type: Optional[str] = None,
-        reservation_affinity_key: Optional[str] = None,
-        reservation_affinity_values: Optional[List[str]] = None,
-        spot: bool = False,
-        system_labels: Optional[Dict[str, str]] = None,
-        required_replica_count: Optional[int] = 0,
-        autoscaling_target_cpu_utilization: Optional[int] = None,
-        autoscaling_target_accelerator_duty_cycle: Optional[int] = None,
-        autoscaling_target_request_count_per_minute: Optional[int] = None,
-        autoscaling_target_pubsub_num_undelivered_messages: Optional[int] = None,
-        autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]] = None,
-    ) -> None:
+    def deploy(self, model: 'Model', deployed_model_display_name: Optional[str]=None, machine_type: Optional[str]=None, min_replica_count: int=1, max_replica_count: int=1, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, gpu_partition_size: Optional[str]=None, tpu_topology: Optional[str]=None, service_account: Optional[str]=None, explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata]=None, explanation_parameters: Optional[aiplatform.explain.ExplanationParameters]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), sync=True, disable_container_logging: bool=False, traffic_percentage: Optional[int]=0, traffic_split: Optional[Dict[str, int]]=None, reservation_affinity_type: Optional[str]=None, reservation_affinity_key: Optional[str]=None, reservation_affinity_values: Optional[List[str]]=None, spot: bool=False, system_labels: Optional[Dict[str, str]]=None, required_replica_count: Optional[int]=0, autoscaling_target_cpu_utilization: Optional[int]=None, autoscaling_target_accelerator_duty_cycle: Optional[int]=None, autoscaling_target_request_count_per_minute: Optional[int]=None, autoscaling_target_pubsub_num_undelivered_messages: Optional[int]=None, autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]]=None) -> None:
         """Deploys a Model to the PrivateEndpoint.
 
         Example Usage:
@@ -4623,69 +3009,15 @@ class PrivateEndpoint(Endpoint):
                 available_replica_count reaches required_replica_count, and the
                 rest of the replicas will be retried.
         """
-
         if self.network:
             if traffic_split is not None:
-                raise ValueError(
-                    "Traffic split is not supported for PSA based PrivateEndpoint."
-                )
+                raise ValueError('Traffic split is not supported for PSA based PrivateEndpoint.')
             traffic_percentage = 100
+        self._validate_deploy_args(min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, deployed_model_display_name=deployed_model_display_name, traffic_split=traffic_split, traffic_percentage=traffic_percentage, deployment_resource_pool=None, required_replica_count=required_replica_count)
+        explanation_spec = _explanation_utils.create_and_validate_explanation_spec(explanation_metadata=explanation_metadata, explanation_parameters=explanation_parameters)
+        self._deploy(model=model, deployed_model_display_name=deployed_model_display_name, traffic_percentage=traffic_percentage, traffic_split=traffic_split, machine_type=machine_type, min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, accelerator_count=accelerator_count, gpu_partition_size=gpu_partition_size, tpu_topology=tpu_topology, reservation_affinity_type=reservation_affinity_type, reservation_affinity_key=reservation_affinity_key, reservation_affinity_values=reservation_affinity_values, service_account=service_account, explanation_spec=explanation_spec, metadata=metadata, sync=sync, spot=spot, disable_container_logging=disable_container_logging, system_labels=system_labels, required_replica_count=required_replica_count, autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization, autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle, autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute, autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages, autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels)
 
-        self._validate_deploy_args(
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            deployed_model_display_name=deployed_model_display_name,
-            traffic_split=traffic_split,
-            traffic_percentage=traffic_percentage,
-            deployment_resource_pool=None,
-            required_replica_count=required_replica_count,
-        )
-
-        explanation_spec = _explanation_utils.create_and_validate_explanation_spec(
-            explanation_metadata=explanation_metadata,
-            explanation_parameters=explanation_parameters,
-        )
-
-        self._deploy(
-            model=model,
-            deployed_model_display_name=deployed_model_display_name,
-            traffic_percentage=traffic_percentage,
-            traffic_split=traffic_split,
-            machine_type=machine_type,
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            accelerator_count=accelerator_count,
-            gpu_partition_size=gpu_partition_size,
-            tpu_topology=tpu_topology,
-            reservation_affinity_type=reservation_affinity_type,
-            reservation_affinity_key=reservation_affinity_key,
-            reservation_affinity_values=reservation_affinity_values,
-            service_account=service_account,
-            explanation_spec=explanation_spec,
-            metadata=metadata,
-            sync=sync,
-            spot=spot,
-            disable_container_logging=disable_container_logging,
-            system_labels=system_labels,
-            required_replica_count=required_replica_count,
-            autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization,
-            autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle,
-            autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute,
-            autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages,
-            autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels,
-        )
-
-    def update(
-        self,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        labels: Optional[Dict[str, str]] = None,
-        traffic_split: Optional[Dict[str, int]] = None,
-        request_metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        update_request_timeout: Optional[float] = None,
-    ) -> "PrivateEndpoint":
+    def update(self, display_name: Optional[str]=None, description: Optional[str]=None, labels: Optional[Dict[str, str]]=None, traffic_split: Optional[Dict[str, int]]=None, request_metadata: Optional[Sequence[Tuple[str, str]]]=(), update_request_timeout: Optional[float]=None) -> 'PrivateEndpoint':
         """Updates a PrivateEndpoint.
 
         Example usage:
@@ -4733,30 +3065,13 @@ class PrivateEndpoint(Endpoint):
         Raises:
             ValueError: If `traffic_split` is set for PSA based private endpoint.
         """
-
         if self.network:
             if traffic_split is not None:
-                raise ValueError(
-                    "Traffic split is not supported for PSA based Private Endpoint."
-                )
-
-        super().update(
-            display_name=display_name,
-            description=description,
-            labels=labels,
-            traffic_split=traffic_split,
-            request_metadata=request_metadata,
-            update_request_timeout=update_request_timeout,
-        )
-
+                raise ValueError('Traffic split is not supported for PSA based Private Endpoint.')
+        super().update(display_name=display_name, description=description, labels=labels, traffic_split=traffic_split, request_metadata=request_metadata, update_request_timeout=update_request_timeout)
         return self
 
-    def undeploy(
-        self,
-        deployed_model_id: str,
-        sync=True,
-        traffic_split: Optional[Dict[str, int]] = None,
-    ) -> None:
+    def undeploy(self, deployed_model_id: str, sync=True, traffic_split: Optional[Dict[str, int]]=None) -> None:
         """Undeploys a deployed model from the PrivateEndpoint.
 
         Example Usage:
@@ -4792,28 +3107,14 @@ class PrivateEndpoint(Endpoint):
                 listed in this map, then it receives no traffic.
         """
         self._sync_gca_resource_if_skipped()
-
         if self.network:
             if traffic_split is not None:
-                raise ValueError(
-                    "Traffic split is not supported for PSA based PrivateEndpoint."
-                )
-            # PSA based private endpoint
-            self._undeploy(
-                deployed_model_id=deployed_model_id,
-                traffic_split=None,
-                sync=sync,
-            )
-
-        # PSC based private endpoint
+                raise ValueError('Traffic split is not supported for PSA based PrivateEndpoint.')
+            self._undeploy(deployed_model_id=deployed_model_id, traffic_split=None, sync=sync)
         if self.private_service_connect_config:
-            super().undeploy(
-                deployed_model_id=deployed_model_id,
-                traffic_split=traffic_split,
-                sync=sync,
-            )
+            super().undeploy(deployed_model_id=deployed_model_id, traffic_split=traffic_split, sync=sync)
 
-    def undeploy_all(self, sync: bool = True) -> "PrivateEndpoint":
+    def undeploy_all(self, sync: bool=True) -> 'PrivateEndpoint':
         """Undeploys every model deployed to this PrivateEndpoint.
 
         Args:
@@ -4824,20 +3125,12 @@ class PrivateEndpoint(Endpoint):
         """
         if self.network:
             self._sync_gca_resource()
-            # PSA based private endpoint
-            self._undeploy(
-                deployed_model_id=self._gca_resource.deployed_models[0].id,
-                traffic_split=None,
-                sync=sync,
-            )
-
+            self._undeploy(deployed_model_id=self._gca_resource.deployed_models[0].id, traffic_split=None, sync=sync)
         if self.private_service_connect_config:
-            # PSC based private endpoint
             super().undeploy_all(sync=sync)
-
         return self
 
-    def delete(self, force: bool = False, sync: bool = True) -> None:
+    def delete(self, force: bool=False, sync: bool=True) -> None:
         """Deletes this Vertex AI PrivateEndpoint resource. If force is set to True,
         all models on this PrivateEndpoint will be undeployed prior to deletion.
 
@@ -4855,30 +3148,24 @@ class PrivateEndpoint(Endpoint):
         """
         if force and self._gca_resource.deployed_models:
             self.undeploy_all(sync=sync)
-
         super().delete(force=False, sync=sync)
-
 
 class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
     client_class = utils.ModelClientWithOverride
-    _resource_noun = "models"
-    _getter_method = "get_model"
-    _list_method = "list_models"
-    _delete_method = "delete_model"
-    _parse_resource_name_method = "parse_model_path"
-    _format_resource_name_method = "model_path"
-    _preview_class = "google.cloud.aiplatform.aiplatform.preview.models.Model"
+    _resource_noun = 'models'
+    _getter_method = 'get_model'
+    _list_method = 'list_models'
+    _delete_method = 'delete_model'
+    _parse_resource_name_method = 'parse_model_path'
+    _format_resource_name_method = 'model_path'
+    _preview_class = 'google.cloud.aiplatform.aiplatform.preview.models.Model'
 
     @property
     def preview(self):
         """Return a Model instance with preview features enabled."""
         from google.cloud.aiplatform.preview import models as preview_models
-
-        if not hasattr(self, "_preview_instance"):
-            self._preview_instance = preview_models.Model(
-                self.resource_name, credentials=self.credentials
-            )
-
+        if not hasattr(self, '_preview_instance'):
+            self._preview_instance = preview_models.Model(self.resource_name, credentials=self.credentials)
         return self._preview_instance
 
     @property
@@ -4895,9 +3182,7 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         return self._gca_resource.description
 
     @property
-    def supported_export_formats(
-        self,
-    ) -> Dict[str, List[gca_model_compat.Model.ExportFormat.ExportableContent]]:
+    def supported_export_formats(self) -> Dict[str, List[gca_model_compat.Model.ExportFormat.ExportableContent]]:
         """The formats and content types in which this Model may be exported.
         If empty, this Model is not available for export.
 
@@ -4907,18 +3192,10 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             {'tf-saved-model': [<ExportableContent.ARTIFACT: 1>]}
         """
         self._assert_gca_resource_is_available()
-        return {
-            export_format.id: [
-                gca_model_compat.Model.ExportFormat.ExportableContent(content)
-                for content in export_format.exportable_contents
-            ]
-            for export_format in self._gca_resource.supported_export_formats
-        }
+        return {export_format.id: [gca_model_compat.Model.ExportFormat.ExportableContent(content) for content in export_format.exportable_contents] for export_format in self._gca_resource.supported_export_formats}
 
     @property
-    def supported_deployment_resources_types(
-        self,
-    ) -> List[model_v1.Model.DeploymentResourcesType]:
+    def supported_deployment_resources_types(self) -> List[model_v1.Model.DeploymentResourcesType]:
         """List of deployment resource types accepted for this Model.
 
         When this Model is deployed, its prediction resources are described by
@@ -4978,10 +3255,10 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         """The schemata that describe formats of the Model's predictions and
         explanations, if available."""
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "predict_schemata")
+        return getattr(self._gca_resource, 'predict_schemata')
 
     @property
-    def training_job(self) -> Optional["aiplatform.training_jobs._TrainingJob"]:
+    def training_job(self) -> Optional['aiplatform.training_jobs._TrainingJob']:
         """The TrainingJob that uploaded this Model, if any.
 
         Raises:
@@ -4989,29 +3266,20 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 cannot be found on the Vertex service.
         """
         self._assert_gca_resource_is_available()
-        job_name = getattr(self._gca_resource, "training_pipeline")
-
+        job_name = getattr(self._gca_resource, 'training_pipeline')
         if not job_name:
             return None
-
         try:
-            return aiplatform.training_jobs._TrainingJob._get_and_return_subclass(
-                resource_name=job_name,
-                project=self.project,
-                location=self.location,
-                credentials=self.credentials,
-            )
+            return aiplatform.training_jobs._TrainingJob._get_and_return_subclass(resource_name=job_name, project=self.project, location=self.location, credentials=self.credentials)
         except api_exceptions.NotFound as exc:
-            raise api_exceptions.NotFound(
-                f"The training job used to create this model could not be found: {job_name}"
-            ) from exc
+            raise api_exceptions.NotFound(f'The training job used to create this model could not be found: {job_name}') from exc
 
     @property
     def container_spec(self) -> Optional[model_v1.ModelContainerSpec]:
         """The specification of the container that is to be used when deploying
         this Model. Not present for AutoML Models."""
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "container_spec")
+        return getattr(self._gca_resource, 'container_spec')
 
     @property
     def version_id(self) -> str:
@@ -5020,7 +3288,7 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         trained under an existing model id. It is an auto-incrementing decimal
         number in string representation."""
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "version_id")
+        return getattr(self._gca_resource, 'version_id')
 
     @property
     def version_aliases(self) -> Sequence[str]:
@@ -5033,25 +3301,25 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         of the model, and there must be exactly one default version alias for a model.
         """
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "version_aliases")
+        return getattr(self._gca_resource, 'version_aliases')
 
     @property
     def version_create_time(self) -> timestamp_pb2.Timestamp:
         """Timestamp when this version was created."""
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "version_create_time")
+        return getattr(self._gca_resource, 'version_create_time')
 
     @property
     def version_update_time(self) -> timestamp_pb2.Timestamp:
         """Timestamp when this version was updated."""
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "version_update_time")
+        return getattr(self._gca_resource, 'version_update_time')
 
     @property
     def version_description(self) -> str:
         """The description of this version."""
         self._assert_gca_resource_is_available()
-        return getattr(self._gca_resource, "version_description")
+        return getattr(self._gca_resource, 'version_description')
 
     @property
     def resource_name(self) -> str:
@@ -5071,25 +3339,16 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         projects/{project}/locations/{location}/models/{model_id}@{version_id}
         """
         self._assert_gca_resource_is_available()
-        return ModelRegistry._get_versioned_name(
-            self.resource_name,
-            self.version_id,
-        )
+        return ModelRegistry._get_versioned_name(self.resource_name, self.version_id)
 
     @property
-    def versioning_registry(self) -> "ModelRegistry":
+    def versioning_registry(self) -> 'ModelRegistry':
         """The registry of model versions associated with this
         Model instance."""
         return self._registry
 
-    def __init__(
-        self,
-        model_name: str,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-        version: Optional[str] = None,
-    ):
+    @codeflash_capture(function_name='Model.__init__', tmp_dir_path='/tmp/codeflash_rnon9p_c/test_return_values', tests_root='/home/ubuntu/work/repo/tests', is_fto=True)
+    def __init__(self, model_name: str, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None, version: Optional[str]=None):
         """Retrieves the model resource and instantiates its representation.
 
         Args:
@@ -5118,43 +3377,18 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         Raises:
             ValueError: If `version` is passed alongside a model_name referencing a different version.
         """
-        # If the version was passed in model_name, parse it
-        model_name, parsed_version = ModelRegistry._parse_versioned_name(model_name)
+        (model_name, parsed_version) = ModelRegistry._parse_versioned_name(model_name)
         if parsed_version:
             if version and version != parsed_version:
-                raise ValueError(
-                    f"A version of {version} was passed that conflicts with the version of {parsed_version} in the model_name."
-                )
+                raise ValueError(f'A version of {version} was passed that conflicts with the version of {parsed_version} in the model_name.')
             version = parsed_version
-
-        super().__init__(
-            project=project,
-            location=location,
-            credentials=credentials,
-            resource_name=model_name,
-        )
-
-        # Model versions can include @{version} in the resource name.
+        super().__init__(project=project, location=location, credentials=credentials, resource_name=model_name)
         self._resource_id_validator = super()._revisioned_resource_id_validator
-
-        # Create a versioned model_name, if it exists, for getting the GCA model
         versioned_model_name = ModelRegistry._get_versioned_name(model_name, version)
         self._gca_resource = self._get_gca_resource(resource_name=versioned_model_name)
+        self._registry = ModelRegistry(self.resource_name, location=location, project=project, credentials=credentials)
 
-        # Create ModelRegistry with the unversioned resource name
-        self._registry = ModelRegistry(
-            self.resource_name,
-            location=location,
-            project=project,
-            credentials=credentials,
-        )
-
-    def update(
-        self,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        labels: Optional[Dict[str, str]] = None,
-    ) -> "Model":
+    def update(self, display_name: Optional[str]=None, description: Optional[str]=None, labels: Optional[Dict[str, str]]=None) -> 'Model':
         """Updates a model.
 
         Example usage:
@@ -5188,90 +3422,30 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         Raises:
             ValueError: If `labels` is not the correct format.
         """
-
         self.wait()
-
         current_model_proto = self.gca_resource
         copied_model_proto = current_model_proto.__class__(current_model_proto)
-
         update_mask: List[str] = []
-
-        # Updates to base model properties cannot occur if a versioned model is passed.
-        # Use the unversioned model resource name.
         copied_model_proto.name = self.resource_name
-
         if display_name:
             utils.validate_display_name(display_name)
-
             copied_model_proto.display_name = display_name
-            update_mask.append("display_name")
-
+            update_mask.append('display_name')
         if description:
             copied_model_proto.description = description
-            update_mask.append("description")
-
+            update_mask.append('description')
         if labels:
             utils.validate_labels(labels)
-
             copied_model_proto.labels = labels
-            update_mask.append("labels")
-
+            update_mask.append('labels')
         update_mask = field_mask_pb2.FieldMask(paths=update_mask)
-
         self.api_client.update_model(model=copied_model_proto, update_mask=update_mask)
-
         self._sync_gca_resource()
-
         return self
 
-    # TODO(b/170979926) Add support for metadata and metadata schema
     @classmethod
     @base.optional_sync()
-    def upload(
-        cls,
-        serving_container_image_uri: Optional[str] = None,
-        *,
-        artifact_uri: Optional[str] = None,
-        model_id: Optional[str] = None,
-        parent_model: Optional[str] = None,
-        is_default_version: bool = True,
-        version_aliases: Optional[Sequence[str]] = None,
-        version_description: Optional[str] = None,
-        serving_container_predict_route: Optional[str] = None,
-        serving_container_health_route: Optional[str] = None,
-        serving_container_invoke_route_prefix: Optional[str] = None,
-        description: Optional[str] = None,
-        serving_container_command: Optional[Sequence[str]] = None,
-        serving_container_args: Optional[Sequence[str]] = None,
-        serving_container_environment_variables: Optional[Dict[str, str]] = None,
-        serving_container_ports: Optional[Sequence[int]] = None,
-        serving_container_grpc_ports: Optional[Sequence[int]] = None,
-        local_model: Optional["LocalModel"] = None,
-        instance_schema_uri: Optional[str] = None,
-        parameters_schema_uri: Optional[str] = None,
-        prediction_schema_uri: Optional[str] = None,
-        explanation_metadata: Optional[explain.ExplanationMetadata] = None,
-        explanation_parameters: Optional[explain.ExplanationParameters] = None,
-        display_name: Optional[str] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-        labels: Optional[Dict[str, str]] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        staging_bucket: Optional[str] = None,
-        sync=True,
-        upload_request_timeout: Optional[float] = None,
-        serving_container_deployment_timeout: Optional[int] = None,
-        serving_container_shared_memory_size_mb: Optional[int] = None,
-        serving_container_startup_probe_exec: Optional[Sequence[str]] = None,
-        serving_container_startup_probe_period_seconds: Optional[int] = None,
-        serving_container_startup_probe_timeout_seconds: Optional[int] = None,
-        serving_container_health_probe_exec: Optional[Sequence[str]] = None,
-        serving_container_health_probe_period_seconds: Optional[int] = None,
-        serving_container_health_probe_timeout_seconds: Optional[int] = None,
-        model_garden_source_model_name: Optional[str] = None,
-        model_garden_source_model_version_id: Optional[str] = None,
-    ) -> "Model":
+    def upload(cls, serving_container_image_uri: Optional[str]=None, *, artifact_uri: Optional[str]=None, model_id: Optional[str]=None, parent_model: Optional[str]=None, is_default_version: bool=True, version_aliases: Optional[Sequence[str]]=None, version_description: Optional[str]=None, serving_container_predict_route: Optional[str]=None, serving_container_health_route: Optional[str]=None, serving_container_invoke_route_prefix: Optional[str]=None, description: Optional[str]=None, serving_container_command: Optional[Sequence[str]]=None, serving_container_args: Optional[Sequence[str]]=None, serving_container_environment_variables: Optional[Dict[str, str]]=None, serving_container_ports: Optional[Sequence[int]]=None, serving_container_grpc_ports: Optional[Sequence[int]]=None, local_model: Optional['LocalModel']=None, instance_schema_uri: Optional[str]=None, parameters_schema_uri: Optional[str]=None, prediction_schema_uri: Optional[str]=None, explanation_metadata: Optional[explain.ExplanationMetadata]=None, explanation_parameters: Optional[explain.ExplanationParameters]=None, display_name: Optional[str]=None, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None, labels: Optional[Dict[str, str]]=None, encryption_spec_key_name: Optional[str]=None, staging_bucket: Optional[str]=None, sync=True, upload_request_timeout: Optional[float]=None, serving_container_deployment_timeout: Optional[int]=None, serving_container_shared_memory_size_mb: Optional[int]=None, serving_container_startup_probe_exec: Optional[Sequence[str]]=None, serving_container_startup_probe_period_seconds: Optional[int]=None, serving_container_startup_probe_timeout_seconds: Optional[int]=None, serving_container_health_probe_exec: Optional[Sequence[str]]=None, serving_container_health_probe_period_seconds: Optional[int]=None, serving_container_health_probe_timeout_seconds: Optional[int]=None, model_garden_source_model_name: Optional[str]=None, model_garden_source_model_version_id: Optional[str]=None) -> 'Model':
         """Uploads a model and returns a Model representing the uploaded Model
         resource.
 
@@ -5515,255 +3689,76 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         utils.validate_display_name(display_name)
         if labels:
             utils.validate_labels(labels)
-
         appended_user_agent = None
         if local_model:
             container_spec = local_model.get_serving_container_spec()
             appended_user_agent = [prediction_constants.CUSTOM_PREDICTION_ROUTINES]
-        elif not serving_container_image_uri and not artifact_uri:
-            # It's a referenced/place holder model.
+        elif not serving_container_image_uri and (not artifact_uri):
             container_spec = None
         else:
             if not serving_container_image_uri:
-                raise ValueError(
-                    "The parameter `serving_container_image_uri` is required "
-                    "if no `local_model` is provided."
-                )
-
+                raise ValueError('The parameter `serving_container_image_uri` is required if no `local_model` is provided.')
             env = None
             ports = None
             grpc_ports = None
-            deployment_timeout = (
-                duration_pb2.Duration(seconds=serving_container_deployment_timeout)
-                if serving_container_deployment_timeout
-                else None
-            )
+            deployment_timeout = duration_pb2.Duration(seconds=serving_container_deployment_timeout) if serving_container_deployment_timeout else None
             startup_probe = None
             health_probe = None
-
             if serving_container_environment_variables:
-                env = [
-                    gca_env_var_compat.EnvVar(name=str(key), value=str(value))
-                    for key, value in serving_container_environment_variables.items()
-                ]
+                env = [gca_env_var_compat.EnvVar(name=str(key), value=str(value)) for (key, value) in serving_container_environment_variables.items()]
             if serving_container_ports:
-                ports = [
-                    gca_model_compat.Port(container_port=port)
-                    for port in serving_container_ports
-                ]
+                ports = [gca_model_compat.Port(container_port=port) for port in serving_container_ports]
             if serving_container_grpc_ports:
-                grpc_ports = [
-                    gca_model_compat.Port(container_port=port)
-                    for port in serving_container_grpc_ports
-                ]
-            if (
-                serving_container_startup_probe_exec
-                or serving_container_startup_probe_period_seconds
-                or serving_container_startup_probe_timeout_seconds
-            ):
+                grpc_ports = [gca_model_compat.Port(container_port=port) for port in serving_container_grpc_ports]
+            if serving_container_startup_probe_exec or serving_container_startup_probe_period_seconds or serving_container_startup_probe_timeout_seconds:
                 startup_probe_exec = None
                 if serving_container_startup_probe_exec:
-                    startup_probe_exec = gca_model_compat.Probe.ExecAction(
-                        command=serving_container_startup_probe_exec
-                    )
-                startup_probe = gca_model_compat.Probe(
-                    exec=startup_probe_exec,
-                    period_seconds=serving_container_startup_probe_period_seconds,
-                    timeout_seconds=serving_container_startup_probe_timeout_seconds,
-                )
-            if (
-                serving_container_health_probe_exec
-                or serving_container_health_probe_period_seconds
-                or serving_container_health_probe_timeout_seconds
-            ):
+                    startup_probe_exec = gca_model_compat.Probe.ExecAction(command=serving_container_startup_probe_exec)
+                startup_probe = gca_model_compat.Probe(exec=startup_probe_exec, period_seconds=serving_container_startup_probe_period_seconds, timeout_seconds=serving_container_startup_probe_timeout_seconds)
+            if serving_container_health_probe_exec or serving_container_health_probe_period_seconds or serving_container_health_probe_timeout_seconds:
                 health_probe_exec = None
                 if serving_container_health_probe_exec:
-                    health_probe_exec = gca_model_compat.Probe.ExecAction(
-                        command=serving_container_health_probe_exec
-                    )
-                health_probe = gca_model_compat.Probe(
-                    exec=health_probe_exec,
-                    period_seconds=serving_container_health_probe_period_seconds,
-                    timeout_seconds=serving_container_health_probe_timeout_seconds,
-                )
-
-            container_spec = gca_model_compat.ModelContainerSpec(
-                image_uri=serving_container_image_uri,
-                command=serving_container_command,
-                args=serving_container_args,
-                env=env,
-                ports=ports,
-                grpc_ports=grpc_ports,
-                predict_route=serving_container_predict_route,
-                health_route=serving_container_health_route,
-                invoke_route_prefix=serving_container_invoke_route_prefix,
-                deployment_timeout=deployment_timeout,
-                shared_memory_size_mb=serving_container_shared_memory_size_mb,
-                startup_probe=startup_probe,
-                health_probe=health_probe,
-            )
-
+                    health_probe_exec = gca_model_compat.Probe.ExecAction(command=serving_container_health_probe_exec)
+                health_probe = gca_model_compat.Probe(exec=health_probe_exec, period_seconds=serving_container_health_probe_period_seconds, timeout_seconds=serving_container_health_probe_timeout_seconds)
+            container_spec = gca_model_compat.ModelContainerSpec(image_uri=serving_container_image_uri, command=serving_container_command, args=serving_container_args, env=env, ports=ports, grpc_ports=grpc_ports, predict_route=serving_container_predict_route, health_route=serving_container_health_route, invoke_route_prefix=serving_container_invoke_route_prefix, deployment_timeout=deployment_timeout, shared_memory_size_mb=serving_container_shared_memory_size_mb, startup_probe=startup_probe, health_probe=health_probe)
         model_predict_schemata = None
         if any([instance_schema_uri, parameters_schema_uri, prediction_schema_uri]):
-            model_predict_schemata = gca_model_compat.PredictSchemata(
-                instance_schema_uri=instance_schema_uri,
-                parameters_schema_uri=parameters_schema_uri,
-                prediction_schema_uri=prediction_schema_uri,
-            )
-
-        # TODO(b/182388545) initializer.global_config.get_encryption_spec from a sync function
-        encryption_spec = initializer.global_config.get_encryption_spec(
-            encryption_spec_key_name=encryption_spec_key_name,
-        )
-
-        parent_model = ModelRegistry._get_true_version_parent(
-            location=location, project=project, parent_model=parent_model
-        )
-
-        version_aliases = ModelRegistry._get_true_alias_list(
-            version_aliases=version_aliases, is_default_version=is_default_version
-        )
-
+            model_predict_schemata = gca_model_compat.PredictSchemata(instance_schema_uri=instance_schema_uri, parameters_schema_uri=parameters_schema_uri, prediction_schema_uri=prediction_schema_uri)
+        encryption_spec = initializer.global_config.get_encryption_spec(encryption_spec_key_name=encryption_spec_key_name)
+        parent_model = ModelRegistry._get_true_version_parent(location=location, project=project, parent_model=parent_model)
+        version_aliases = ModelRegistry._get_true_alias_list(version_aliases=version_aliases, is_default_version=is_default_version)
         base_model_source = None
         if model_garden_source_model_name:
             if model_garden_source_model_version_id:
-                base_model_source = gca_model_compat.Model.BaseModelSource(
-                    model_garden_source=gca_model_compat.ModelGardenSource(
-                        public_model_name=model_garden_source_model_name,
-                        version_id=model_garden_source_model_version_id,
-                    )
-                )
+                base_model_source = gca_model_compat.Model.BaseModelSource(model_garden_source=gca_model_compat.ModelGardenSource(public_model_name=model_garden_source_model_name, version_id=model_garden_source_model_version_id))
             else:
-                base_model_source = gca_model_compat.Model.BaseModelSource(
-                    model_garden_source=gca_model_compat.ModelGardenSource(
-                        public_model_name=model_garden_source_model_name,
-                    )
-                )
-
-        managed_model = gca_model_compat.Model(
-            display_name=display_name,
-            description=description,
-            version_aliases=version_aliases,
-            version_description=version_description,
-            container_spec=container_spec,
-            predict_schemata=model_predict_schemata,
-            labels=labels,
-            encryption_spec=encryption_spec,
-            base_model_source=base_model_source,
-        )
-
-        if artifact_uri and not artifact_uri.startswith("gs://"):
+                base_model_source = gca_model_compat.Model.BaseModelSource(model_garden_source=gca_model_compat.ModelGardenSource(public_model_name=model_garden_source_model_name))
+        managed_model = gca_model_compat.Model(display_name=display_name, description=description, version_aliases=version_aliases, version_description=version_description, container_spec=container_spec, predict_schemata=model_predict_schemata, labels=labels, encryption_spec=encryption_spec, base_model_source=base_model_source)
+        if artifact_uri and (not artifact_uri.startswith('gs://')):
             model_dir = pathlib.Path(artifact_uri)
-            # Validating the model directory
             if not model_dir.exists():
                 raise ValueError(f"artifact_uri path does not exist: '{artifact_uri}'")
-            PREBUILT_IMAGE_RE = "(us|europe|asia)-docker.pkg.dev/vertex-ai/prediction/"
-            if serving_container_image_uri and re.match(
-                PREBUILT_IMAGE_RE, serving_container_image_uri
-            ):
+            PREBUILT_IMAGE_RE = '(us|europe|asia)-docker.pkg.dev/vertex-ai/prediction/'
+            if serving_container_image_uri and re.match(PREBUILT_IMAGE_RE, serving_container_image_uri):
                 if not model_dir.is_dir():
-                    raise ValueError(
-                        f"artifact_uri path must be a directory: '{artifact_uri}' when using prebuilt image '{serving_container_image_uri}'"
-                    )
-                if not any(
-                    (model_dir / file_name).exists()
-                    for file_name in _SUPPORTED_MODEL_FILE_NAMES
-                ):
-                    raise ValueError(
-                        "artifact_uri directory does not contain any supported model files. "
-                        f"When using a prebuilt serving image, the upload method only supports the following model files: '{_SUPPORTED_MODEL_FILE_NAMES}'"
-                    )
-
-            # Uploading the model
-            staged_data_uri = gcs_utils.stage_local_data_in_gcs(
-                data_path=str(model_dir),
-                staging_gcs_dir=staging_bucket,
-                project=project,
-                location=location,
-                credentials=credentials,
-            )
+                    raise ValueError(f"artifact_uri path must be a directory: '{artifact_uri}' when using prebuilt image '{serving_container_image_uri}'")
+                if not any(((model_dir / file_name).exists() for file_name in _SUPPORTED_MODEL_FILE_NAMES)):
+                    raise ValueError(f"artifact_uri directory does not contain any supported model files. When using a prebuilt serving image, the upload method only supports the following model files: '{_SUPPORTED_MODEL_FILE_NAMES}'")
+            staged_data_uri = gcs_utils.stage_local_data_in_gcs(data_path=str(model_dir), staging_gcs_dir=staging_bucket, project=project, location=location, credentials=credentials)
             artifact_uri = staged_data_uri
-
         if artifact_uri:
             managed_model.artifact_uri = artifact_uri
-
-        managed_model.explanation_spec = (
-            _explanation_utils.create_and_validate_explanation_spec(
-                explanation_metadata=explanation_metadata,
-                explanation_parameters=explanation_parameters,
-            )
-        )
-
-        request = gca_model_service_compat.UploadModelRequest(
-            parent=initializer.global_config.common_location_path(project, location),
-            model=managed_model,
-            parent_model=parent_model,
-            model_id=model_id,
-        )
-
-        api_client = cls._instantiate_client(
-            location, credentials, appended_user_agent=appended_user_agent
-        )
-
-        lro = api_client.upload_model(
-            request=request,
-            timeout=upload_request_timeout,
-        )
-
+        managed_model.explanation_spec = _explanation_utils.create_and_validate_explanation_spec(explanation_metadata=explanation_metadata, explanation_parameters=explanation_parameters)
+        request = gca_model_service_compat.UploadModelRequest(parent=initializer.global_config.common_location_path(project, location), model=managed_model, parent_model=parent_model, model_id=model_id)
+        api_client = cls._instantiate_client(location, credentials, appended_user_agent=appended_user_agent)
+        lro = api_client.upload_model(request=request, timeout=upload_request_timeout)
         _LOGGER.log_create_with_lro(cls, lro)
-
         model_upload_response = lro.result()
-
-        this_model = cls(
-            model_upload_response.model, version=model_upload_response.model_version_id
-        )
-
-        _LOGGER.log_create_complete(cls, this_model._gca_resource, "model")
-
+        this_model = cls(model_upload_response.model, version=model_upload_response.model_version_id)
+        _LOGGER.log_create_complete(cls, this_model._gca_resource, 'model')
         return this_model
 
-    def deploy(
-        self,
-        endpoint: Optional[Union["Endpoint", "PrivateEndpoint"]] = None,
-        deployed_model_display_name: Optional[str] = None,
-        traffic_percentage: Optional[int] = 0,
-        traffic_split: Optional[Dict[str, int]] = None,
-        machine_type: Optional[str] = None,
-        min_replica_count: int = 1,
-        max_replica_count: int = 1,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        gpu_partition_size: Optional[str] = None,
-        tpu_topology: Optional[str] = None,
-        service_account: Optional[str] = None,
-        explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata] = None,
-        explanation_parameters: Optional[
-            aiplatform.explain.ExplanationParameters
-        ] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        encryption_spec_key_name: Optional[str] = None,
-        network: Optional[str] = None,
-        sync=True,
-        deploy_request_timeout: Optional[float] = None,
-        autoscaling_target_cpu_utilization: Optional[int] = None,
-        autoscaling_target_accelerator_duty_cycle: Optional[int] = None,
-        autoscaling_target_request_count_per_minute: Optional[int] = None,
-        autoscaling_target_pubsub_num_undelivered_messages: Optional[int] = None,
-        autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]] = None,
-        enable_access_logging=False,
-        disable_container_logging: bool = False,
-        private_service_connect_config: Optional[
-            PrivateEndpoint.PrivateServiceConnectConfig
-        ] = None,
-        deployment_resource_pool: Optional[DeploymentResourcePool] = None,
-        reservation_affinity_type: Optional[str] = None,
-        reservation_affinity_key: Optional[str] = None,
-        reservation_affinity_values: Optional[List[str]] = None,
-        spot: bool = False,
-        fast_tryout_enabled: bool = False,
-        system_labels: Optional[Dict[str, str]] = None,
-        required_replica_count: Optional[int] = 0,
-    ) -> Union[Endpoint, PrivateEndpoint]:
+    def deploy(self, endpoint: Optional[Union['Endpoint', 'PrivateEndpoint']]=None, deployed_model_display_name: Optional[str]=None, traffic_percentage: Optional[int]=0, traffic_split: Optional[Dict[str, int]]=None, machine_type: Optional[str]=None, min_replica_count: int=1, max_replica_count: int=1, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, gpu_partition_size: Optional[str]=None, tpu_topology: Optional[str]=None, service_account: Optional[str]=None, explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata]=None, explanation_parameters: Optional[aiplatform.explain.ExplanationParameters]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), encryption_spec_key_name: Optional[str]=None, network: Optional[str]=None, sync=True, deploy_request_timeout: Optional[float]=None, autoscaling_target_cpu_utilization: Optional[int]=None, autoscaling_target_accelerator_duty_cycle: Optional[int]=None, autoscaling_target_request_count_per_minute: Optional[int]=None, autoscaling_target_pubsub_num_undelivered_messages: Optional[int]=None, autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]]=None, enable_access_logging=False, disable_container_logging: bool=False, private_service_connect_config: Optional[PrivateEndpoint.PrivateServiceConnectConfig]=None, deployment_resource_pool: Optional[DeploymentResourcePool]=None, reservation_affinity_type: Optional[str]=None, reservation_affinity_key: Optional[str]=None, reservation_affinity_values: Optional[List[str]]=None, spot: bool=False, fast_tryout_enabled: bool=False, system_labels: Optional[Dict[str, str]]=None, required_replica_count: Optional[int]=0) -> Union[Endpoint, PrivateEndpoint]:
         """Deploys model to endpoint. Endpoint will be created if unspecified.
 
         Args:
@@ -5944,74 +3939,14 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             ValueError: If `traffic_split` is set for PrivateEndpoint.
         """
         network = network or initializer.global_config.network
-
-        Endpoint._validate_deploy_args(
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            deployed_model_display_name=deployed_model_display_name,
-            traffic_split=traffic_split,
-            traffic_percentage=traffic_percentage,
-            deployment_resource_pool=deployment_resource_pool,
-            required_replica_count=required_replica_count,
-        )
-
+        Endpoint._validate_deploy_args(min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, deployed_model_display_name=deployed_model_display_name, traffic_split=traffic_split, traffic_percentage=traffic_percentage, deployment_resource_pool=deployment_resource_pool, required_replica_count=required_replica_count)
         if isinstance(endpoint, PrivateEndpoint):
             if deployment_resource_pool:
-                raise ValueError(
-                    "Model co-hosting is not supported for PrivateEndpoint. "
-                    "Try calling deploy() without providing `deployment_resource_pool`."
-                )
-
+                raise ValueError('Model co-hosting is not supported for PrivateEndpoint. Try calling deploy() without providing `deployment_resource_pool`.')
             if traffic_split and endpoint.network:
-                raise ValueError(
-                    "Traffic splitting is not yet supported for PSA based PrivateEndpoint. "
-                    "Try calling deploy() without providing `traffic_split`. "
-                    "A maximum of one model can be deployed to each private Endpoint."
-                )
-
-        explanation_spec = _explanation_utils.create_and_validate_explanation_spec(
-            explanation_metadata=explanation_metadata,
-            explanation_parameters=explanation_parameters,
-        )
-
-        return self._deploy(
-            endpoint=endpoint,
-            deployed_model_display_name=deployed_model_display_name,
-            traffic_percentage=traffic_percentage,
-            traffic_split=traffic_split,
-            machine_type=machine_type,
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            accelerator_count=accelerator_count,
-            gpu_partition_size=gpu_partition_size,
-            tpu_topology=tpu_topology,
-            reservation_affinity_type=reservation_affinity_type,
-            reservation_affinity_key=reservation_affinity_key,
-            reservation_affinity_values=reservation_affinity_values,
-            service_account=service_account,
-            explanation_spec=explanation_spec,
-            metadata=metadata,
-            encryption_spec_key_name=encryption_spec_key_name
-            or initializer.global_config.encryption_spec_key_name,
-            network=network,
-            sync=sync,
-            deploy_request_timeout=deploy_request_timeout,
-            autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization,
-            autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle,
-            autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute,
-            autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages,
-            autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels,
-            spot=spot,
-            enable_access_logging=enable_access_logging,
-            disable_container_logging=disable_container_logging,
-            private_service_connect_config=private_service_connect_config,
-            deployment_resource_pool=deployment_resource_pool,
-            fast_tryout_enabled=fast_tryout_enabled,
-            system_labels=system_labels,
-            required_replica_count=required_replica_count,
-        )
+                raise ValueError('Traffic splitting is not yet supported for PSA based PrivateEndpoint. Try calling deploy() without providing `traffic_split`. A maximum of one model can be deployed to each private Endpoint.')
+        explanation_spec = _explanation_utils.create_and_validate_explanation_spec(explanation_metadata=explanation_metadata, explanation_parameters=explanation_parameters)
+        return self._deploy(endpoint=endpoint, deployed_model_display_name=deployed_model_display_name, traffic_percentage=traffic_percentage, traffic_split=traffic_split, machine_type=machine_type, min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, accelerator_count=accelerator_count, gpu_partition_size=gpu_partition_size, tpu_topology=tpu_topology, reservation_affinity_type=reservation_affinity_type, reservation_affinity_key=reservation_affinity_key, reservation_affinity_values=reservation_affinity_values, service_account=service_account, explanation_spec=explanation_spec, metadata=metadata, encryption_spec_key_name=encryption_spec_key_name or initializer.global_config.encryption_spec_key_name, network=network, sync=sync, deploy_request_timeout=deploy_request_timeout, autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization, autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle, autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute, autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages, autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels, spot=spot, enable_access_logging=enable_access_logging, disable_container_logging=disable_container_logging, private_service_connect_config=private_service_connect_config, deployment_resource_pool=deployment_resource_pool, fast_tryout_enabled=fast_tryout_enabled, system_labels=system_labels, required_replica_count=required_replica_count)
 
     def _should_enable_dedicated_endpoint(self, fast_tryout_enabled: bool) -> bool:
         """Check if dedicated endpoint should be enabled for this endpoint.
@@ -6020,46 +3955,8 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
         """
         return fast_tryout_enabled
 
-    @base.optional_sync(return_input_arg="endpoint", bind_future_to_self=False)
-    def _deploy(
-        self,
-        endpoint: Optional[Union["Endpoint", "PrivateEndpoint"]] = None,
-        deployed_model_display_name: Optional[str] = None,
-        traffic_percentage: Optional[int] = 0,
-        traffic_split: Optional[Dict[str, int]] = None,
-        machine_type: Optional[str] = None,
-        min_replica_count: int = 1,
-        max_replica_count: int = 1,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        gpu_partition_size: Optional[str] = None,
-        tpu_topology: Optional[str] = None,
-        reservation_affinity_type: Optional[str] = None,
-        reservation_affinity_key: Optional[str] = None,
-        reservation_affinity_values: Optional[List[str]] = None,
-        service_account: Optional[str] = None,
-        explanation_spec: Optional[aiplatform.explain.ExplanationSpec] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = (),
-        encryption_spec_key_name: Optional[str] = None,
-        network: Optional[str] = None,
-        sync: bool = True,
-        deploy_request_timeout: Optional[float] = None,
-        autoscaling_target_cpu_utilization: Optional[int] = None,
-        autoscaling_target_accelerator_duty_cycle: Optional[int] = None,
-        autoscaling_target_request_count_per_minute: Optional[int] = None,
-        autoscaling_target_pubsub_num_undelivered_messages: Optional[int] = None,
-        autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]] = None,
-        spot: bool = False,
-        enable_access_logging=False,
-        disable_container_logging: bool = False,
-        private_service_connect_config: Optional[
-            PrivateEndpoint.PrivateServiceConnectConfig
-        ] = None,
-        deployment_resource_pool: Optional[DeploymentResourcePool] = None,
-        fast_tryout_enabled: bool = False,
-        system_labels: Optional[Dict[str, str]] = None,
-        required_replica_count: Optional[int] = 0,
-    ) -> Union[Endpoint, PrivateEndpoint]:
+    @base.optional_sync(return_input_arg='endpoint', bind_future_to_self=False)
+    def _deploy(self, endpoint: Optional[Union['Endpoint', 'PrivateEndpoint']]=None, deployed_model_display_name: Optional[str]=None, traffic_percentage: Optional[int]=0, traffic_split: Optional[Dict[str, int]]=None, machine_type: Optional[str]=None, min_replica_count: int=1, max_replica_count: int=1, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, gpu_partition_size: Optional[str]=None, tpu_topology: Optional[str]=None, reservation_affinity_type: Optional[str]=None, reservation_affinity_key: Optional[str]=None, reservation_affinity_values: Optional[List[str]]=None, service_account: Optional[str]=None, explanation_spec: Optional[aiplatform.explain.ExplanationSpec]=None, metadata: Optional[Sequence[Tuple[str, str]]]=(), encryption_spec_key_name: Optional[str]=None, network: Optional[str]=None, sync: bool=True, deploy_request_timeout: Optional[float]=None, autoscaling_target_cpu_utilization: Optional[int]=None, autoscaling_target_accelerator_duty_cycle: Optional[int]=None, autoscaling_target_request_count_per_minute: Optional[int]=None, autoscaling_target_pubsub_num_undelivered_messages: Optional[int]=None, autoscaling_pubsub_subscription_labels: Optional[Dict[str, str]]=None, spot: bool=False, enable_access_logging=False, disable_container_logging: bool=False, private_service_connect_config: Optional[PrivateEndpoint.PrivateServiceConnectConfig]=None, deployment_resource_pool: Optional[DeploymentResourcePool]=None, fast_tryout_enabled: bool=False, system_labels: Optional[Dict[str, str]]=None, required_replica_count: Optional[int]=0) -> Union[Endpoint, PrivateEndpoint]:
         """Deploys model to endpoint. Endpoint will be created if unspecified.
 
         Args:
@@ -6213,105 +4110,19 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             endpoint (Union[Endpoint, PrivateEndpoint]):
                 Endpoint with the deployed model.
         """
-
         if endpoint is None:
-            display_name = self.display_name[:118] + "_endpoint"
-
-            if not network and not private_service_connect_config:
-                endpoint = Endpoint.create(
-                    display_name=display_name,
-                    project=self.project,
-                    location=self.location,
-                    credentials=self.credentials,
-                    encryption_spec_key_name=encryption_spec_key_name,
-                    dedicated_endpoint_enabled=self._should_enable_dedicated_endpoint(
-                        fast_tryout_enabled
-                    ),
-                )
+            display_name = self.display_name[:118] + '_endpoint'
+            if not network and (not private_service_connect_config):
+                endpoint = Endpoint.create(display_name=display_name, project=self.project, location=self.location, credentials=self.credentials, encryption_spec_key_name=encryption_spec_key_name, dedicated_endpoint_enabled=self._should_enable_dedicated_endpoint(fast_tryout_enabled))
             else:
-                endpoint = PrivateEndpoint.create(
-                    display_name=display_name,
-                    network=network,
-                    project=self.project,
-                    location=self.location,
-                    credentials=self.credentials,
-                    encryption_spec_key_name=encryption_spec_key_name,
-                    private_service_connect_config=private_service_connect_config,
-                )
-
-        _LOGGER.log_action_start_against_resource("Deploying model to", "", endpoint)
-
-        endpoint._deploy_call(
-            endpoint.api_client,
-            endpoint.resource_name,
-            self,
-            endpoint._gca_resource.traffic_split,
-            network=network or endpoint.network,
-            deployed_model_display_name=deployed_model_display_name,
-            traffic_percentage=traffic_percentage,
-            traffic_split=traffic_split,
-            machine_type=machine_type,
-            min_replica_count=min_replica_count,
-            max_replica_count=max_replica_count,
-            accelerator_type=accelerator_type,
-            accelerator_count=accelerator_count,
-            gpu_partition_size=gpu_partition_size,
-            tpu_topology=tpu_topology,
-            reservation_affinity_type=reservation_affinity_type,
-            reservation_affinity_key=reservation_affinity_key,
-            reservation_affinity_values=reservation_affinity_values,
-            service_account=service_account,
-            explanation_spec=explanation_spec,
-            metadata=metadata,
-            deploy_request_timeout=deploy_request_timeout,
-            autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization,
-            autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle,
-            autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute,
-            autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages,
-            autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels,
-            spot=spot,
-            enable_access_logging=enable_access_logging,
-            disable_container_logging=disable_container_logging,
-            deployment_resource_pool=deployment_resource_pool,
-            fast_tryout_enabled=fast_tryout_enabled,
-            system_labels=system_labels,
-            required_replica_count=required_replica_count,
-        )
-
-        _LOGGER.log_action_completed_against_resource("model", "deployed", endpoint)
-
+                endpoint = PrivateEndpoint.create(display_name=display_name, network=network, project=self.project, location=self.location, credentials=self.credentials, encryption_spec_key_name=encryption_spec_key_name, private_service_connect_config=private_service_connect_config)
+        _LOGGER.log_action_start_against_resource('Deploying model to', '', endpoint)
+        endpoint._deploy_call(endpoint.api_client, endpoint.resource_name, self, endpoint._gca_resource.traffic_split, network=network or endpoint.network, deployed_model_display_name=deployed_model_display_name, traffic_percentage=traffic_percentage, traffic_split=traffic_split, machine_type=machine_type, min_replica_count=min_replica_count, max_replica_count=max_replica_count, accelerator_type=accelerator_type, accelerator_count=accelerator_count, gpu_partition_size=gpu_partition_size, tpu_topology=tpu_topology, reservation_affinity_type=reservation_affinity_type, reservation_affinity_key=reservation_affinity_key, reservation_affinity_values=reservation_affinity_values, service_account=service_account, explanation_spec=explanation_spec, metadata=metadata, deploy_request_timeout=deploy_request_timeout, autoscaling_target_cpu_utilization=autoscaling_target_cpu_utilization, autoscaling_target_accelerator_duty_cycle=autoscaling_target_accelerator_duty_cycle, autoscaling_target_request_count_per_minute=autoscaling_target_request_count_per_minute, autoscaling_target_pubsub_num_undelivered_messages=autoscaling_target_pubsub_num_undelivered_messages, autoscaling_pubsub_subscription_labels=autoscaling_pubsub_subscription_labels, spot=spot, enable_access_logging=enable_access_logging, disable_container_logging=disable_container_logging, deployment_resource_pool=deployment_resource_pool, fast_tryout_enabled=fast_tryout_enabled, system_labels=system_labels, required_replica_count=required_replica_count)
+        _LOGGER.log_action_completed_against_resource('model', 'deployed', endpoint)
         endpoint._sync_gca_resource()
-
         return endpoint
 
-    def batch_predict(
-        self,
-        job_display_name: Optional[str] = None,
-        gcs_source: Optional[Union[str, Sequence[str]]] = None,
-        bigquery_source: Optional[str] = None,
-        instances_format: str = "jsonl",
-        gcs_destination_prefix: Optional[str] = None,
-        bigquery_destination_prefix: Optional[str] = None,
-        predictions_format: str = "jsonl",
-        model_parameters: Optional[Dict] = None,
-        machine_type: Optional[str] = None,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        starting_replica_count: Optional[int] = None,
-        max_replica_count: Optional[int] = None,
-        generate_explanation: Optional[bool] = False,
-        explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata] = None,
-        explanation_parameters: Optional[
-            aiplatform.explain.ExplanationParameters
-        ] = None,
-        labels: Optional[Dict[str, str]] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        sync: bool = True,
-        create_request_timeout: Optional[float] = None,
-        batch_size: Optional[int] = None,
-        service_account: Optional[str] = None,
-    ) -> jobs.BatchPredictionJob:
+    def batch_predict(self, job_display_name: Optional[str]=None, gcs_source: Optional[Union[str, Sequence[str]]]=None, bigquery_source: Optional[str]=None, instances_format: str='jsonl', gcs_destination_prefix: Optional[str]=None, bigquery_destination_prefix: Optional[str]=None, predictions_format: str='jsonl', model_parameters: Optional[Dict]=None, machine_type: Optional[str]=None, accelerator_type: Optional[str]=None, accelerator_count: Optional[int]=None, starting_replica_count: Optional[int]=None, max_replica_count: Optional[int]=None, generate_explanation: Optional[bool]=False, explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata]=None, explanation_parameters: Optional[aiplatform.explain.ExplanationParameters]=None, labels: Optional[Dict[str, str]]=None, credentials: Optional[auth_credentials.Credentials]=None, encryption_spec_key_name: Optional[str]=None, sync: bool=True, create_request_timeout: Optional[float]=None, batch_size: Optional[int]=None, service_account: Optional[str]=None) -> jobs.BatchPredictionJob:
         """Creates a batch prediction job using this Model and outputs
         prediction results to the provided destination prefix in the specified
         `predictions_format`. One source and one destination prefix are
@@ -6480,45 +4291,10 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             job (jobs.BatchPredictionJob):
                 Instantiated representation of the created batch prediction job.
         """
-
-        return jobs.BatchPredictionJob.create(
-            job_display_name=job_display_name,
-            model_name=self,
-            instances_format=instances_format,
-            predictions_format=predictions_format,
-            gcs_source=gcs_source,
-            bigquery_source=bigquery_source,
-            gcs_destination_prefix=gcs_destination_prefix,
-            bigquery_destination_prefix=bigquery_destination_prefix,
-            model_parameters=model_parameters,
-            machine_type=machine_type,
-            accelerator_type=accelerator_type,
-            accelerator_count=accelerator_count,
-            starting_replica_count=starting_replica_count,
-            max_replica_count=max_replica_count,
-            batch_size=batch_size,
-            generate_explanation=generate_explanation,
-            explanation_metadata=explanation_metadata,
-            explanation_parameters=explanation_parameters,
-            labels=labels,
-            project=self.project,
-            location=self.location,
-            credentials=credentials or self.credentials,
-            encryption_spec_key_name=encryption_spec_key_name,
-            sync=sync,
-            create_request_timeout=create_request_timeout,
-            service_account=service_account,
-        )
+        return jobs.BatchPredictionJob.create(job_display_name=job_display_name, model_name=self, instances_format=instances_format, predictions_format=predictions_format, gcs_source=gcs_source, bigquery_source=bigquery_source, gcs_destination_prefix=gcs_destination_prefix, bigquery_destination_prefix=bigquery_destination_prefix, model_parameters=model_parameters, machine_type=machine_type, accelerator_type=accelerator_type, accelerator_count=accelerator_count, starting_replica_count=starting_replica_count, max_replica_count=max_replica_count, batch_size=batch_size, generate_explanation=generate_explanation, explanation_metadata=explanation_metadata, explanation_parameters=explanation_parameters, labels=labels, project=self.project, location=self.location, credentials=credentials or self.credentials, encryption_spec_key_name=encryption_spec_key_name, sync=sync, create_request_timeout=create_request_timeout, service_account=service_account)
 
     @classmethod
-    def list(
-        cls,
-        filter: Optional[str] = None,
-        order_by: Optional[str] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ) -> List["models.Model"]:
+    def list(cls, filter: Optional[str]=None, order_by: Optional[str]=None, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None) -> List['models.Model']:
         """List all Model resource instances.
 
         Example Usage:
@@ -6548,23 +4324,10 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             List[models.Model]:
                 A list of Model resource objects
         """
-
-        return cls._list(
-            filter=filter,
-            order_by=order_by,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
+        return cls._list(filter=filter, order_by=order_by, project=project, location=location, credentials=credentials)
 
     @classmethod
-    def _construct_sdk_resource_from_gapic(
-        cls,
-        gapic_resource: gca_model_compat.Model,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ) -> "Model":
+    def _construct_sdk_resource_from_gapic(cls, gapic_resource: gca_model_compat.Model, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None) -> 'Model':
         """Override base._construct_sdk_resource_from_gapic to allow for setting
         a ModelRegistry and resource_id_validator.
 
@@ -6585,34 +4348,16 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             Model:
                 An initialized SDK Model object that represents the Model GAPIC type.
         """
-        sdk_resource = super()._construct_sdk_resource_from_gapic(
-            gapic_resource=gapic_resource,
-            project=project,
-            location=location,
-            credentials=credentials,
-        )
+        sdk_resource = super()._construct_sdk_resource_from_gapic(gapic_resource=gapic_resource, project=project, location=location, credentials=credentials)
         sdk_resource._resource_id_validator = super()._revisioned_resource_id_validator
-
-        sdk_resource._registry = ModelRegistry(
-            sdk_resource.resource_name,
-            location=location,
-            project=project,
-            credentials=credentials,
-        )
-
+        sdk_resource._registry = ModelRegistry(sdk_resource.resource_name, location=location, project=project, credentials=credentials)
         return sdk_resource
 
     @base.optional_sync()
     def _wait_on_export(self, operation_future: operation.Operation, sync=True) -> None:
         operation_future.result()
 
-    def export_model(
-        self,
-        export_format_id: str,
-        artifact_destination: Optional[str] = None,
-        image_destination: Optional[str] = None,
-        sync: bool = True,
-    ) -> Dict[str, str]:
+    def export_model(self, export_format_id: str, artifact_destination: Optional[str]=None, image_destination: Optional[str]=None, sync: bool=True) -> Dict[str, str]:
         """Exports a trained, exportable Model to a location specified by the user.
         A Model is considered to be exportable if it has at least one `supported_export_formats`.
         Either `artifact_destination` or `image_destination` must be provided.
@@ -6672,109 +4417,36 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             ValueError: If model does not support exporting.
             ValueError: If invalid arguments or export formats are provided.
         """
-
         self.wait()
-
-        # Model does not support exporting
         if not self.supported_export_formats:
-            raise ValueError(f"The model `{self.resource_name}` is not exportable.")
-
-        # No destination provided
+            raise ValueError(f'The model `{self.resource_name}` is not exportable.')
         if not any((artifact_destination, image_destination)):
-            raise ValueError(
-                "Please provide an `artifact_destination` or `image_destination`."
-            )
-
+            raise ValueError('Please provide an `artifact_destination` or `image_destination`.')
         export_format_id = export_format_id.lower()
-
-        # Unsupported export type
         if export_format_id not in self.supported_export_formats:
-            raise ValueError(
-                f"'{export_format_id}' is not a supported export format for this model. "
-                f"Choose one of the following: {self.supported_export_formats}"
-            )
-
+            raise ValueError(f"'{export_format_id}' is not a supported export format for this model. Choose one of the following: {self.supported_export_formats}")
         content_types = gca_model_compat.Model.ExportFormat.ExportableContent
         supported_content_types = self.supported_export_formats[export_format_id]
-
-        if (
-            artifact_destination
-            and content_types.ARTIFACT not in supported_content_types
-        ):
-            raise ValueError(
-                "This model can not be exported as an artifact in '{export_format_id}' format. "
-                "Try exporting as a container image by passing the `image_destination` argument."
-            )
-
+        if artifact_destination and content_types.ARTIFACT not in supported_content_types:
+            raise ValueError("This model can not be exported as an artifact in '{export_format_id}' format. Try exporting as a container image by passing the `image_destination` argument.")
         if image_destination and content_types.IMAGE not in supported_content_types:
-            raise ValueError(
-                "This model can not be exported as a container image in '{export_format_id}' format. "
-                "Try exporting the model artifacts by passing a `artifact_destination` argument."
-            )
-
-        # Construct request payload
-        output_config = gca_model_service_compat.ExportModelRequest.OutputConfig(
-            export_format_id=export_format_id
-        )
-
+            raise ValueError("This model can not be exported as a container image in '{export_format_id}' format. Try exporting the model artifacts by passing a `artifact_destination` argument.")
+        output_config = gca_model_service_compat.ExportModelRequest.OutputConfig(export_format_id=export_format_id)
         if artifact_destination:
-            output_config.artifact_destination = gca_io_compat.GcsDestination(
-                output_uri_prefix=artifact_destination
-            )
-
+            output_config.artifact_destination = gca_io_compat.GcsDestination(output_uri_prefix=artifact_destination)
         if image_destination:
-            output_config.image_destination = (
-                gca_io_compat.ContainerRegistryDestination(output_uri=image_destination)
-            )
-
-        _LOGGER.log_action_start_against_resource("Exporting", "model", self)
-
+            output_config.image_destination = gca_io_compat.ContainerRegistryDestination(output_uri=image_destination)
+        _LOGGER.log_action_start_against_resource('Exporting', 'model', self)
         model_name = self.versioned_resource_name
-
-        operation_future = self.api_client.export_model(
-            name=model_name, output_config=output_config
-        )
-
-        _LOGGER.log_action_started_against_resource_with_lro(
-            "Export", "model", self.__class__, operation_future
-        )
-
-        # Block before returning
+        operation_future = self.api_client.export_model(name=model_name, output_config=output_config)
+        _LOGGER.log_action_started_against_resource_with_lro('Export', 'model', self.__class__, operation_future)
         self._wait_on_export(operation_future=operation_future, sync=sync)
-
-        _LOGGER.log_action_completed_against_resource("model", "exported", self)
-
+        _LOGGER.log_action_completed_against_resource('model', 'exported', self)
         return json_format.MessageToDict(operation_future.metadata.output_info._pb)
 
     @classmethod
     @base.optional_sync()
-    def upload_xgboost_model_file(
-        cls,
-        model_file_path: str,
-        xgboost_version: Optional[str] = None,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        model_id: Optional[str] = None,
-        parent_model: Optional[str] = None,
-        is_default_version: Optional[bool] = True,
-        version_aliases: Optional[Sequence[str]] = None,
-        version_description: Optional[str] = None,
-        instance_schema_uri: Optional[str] = None,
-        parameters_schema_uri: Optional[str] = None,
-        prediction_schema_uri: Optional[str] = None,
-        explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata] = None,
-        explanation_parameters: Optional[
-            aiplatform.explain.ExplanationParameters
-        ] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-        labels: Optional[Dict[str, str]] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        staging_bucket: Optional[str] = None,
-        sync=True,
-        upload_request_timeout: Optional[float] = None,
-    ) -> "Model":
+    def upload_xgboost_model_file(cls, model_file_path: str, xgboost_version: Optional[str]=None, display_name: Optional[str]=None, description: Optional[str]=None, model_id: Optional[str]=None, parent_model: Optional[str]=None, is_default_version: Optional[bool]=True, version_aliases: Optional[Sequence[str]]=None, version_description: Optional[str]=None, instance_schema_uri: Optional[str]=None, parameters_schema_uri: Optional[str]=None, prediction_schema_uri: Optional[str]=None, explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata]=None, explanation_parameters: Optional[aiplatform.explain.ExplanationParameters]=None, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None, labels: Optional[Dict[str, str]]=None, encryption_spec_key_name: Optional[str]=None, staging_bucket: Optional[str]=None, sync=True, upload_request_timeout: Optional[float]=None) -> 'Model':
         """Uploads a model and returns a Model representing the uploaded Model
         resource.
 
@@ -6919,102 +4591,25 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             ValueError: If model directory does not contain a supported model file.
         """
         if not display_name:
-            display_name = cls._generate_display_name("XGBoost model")
-
-        XGBOOST_SUPPORTED_MODEL_FILE_EXTENSIONS = [
-            ".pkl",
-            ".joblib",
-            ".bst",
-        ]
-
-        container_image_uri = aiplatform.helpers.get_prebuilt_prediction_container_uri(
-            region=location,
-            framework="xgboost",
-            framework_version=xgboost_version or "1.4",
-            accelerator="cpu",
-        )
-
+            display_name = cls._generate_display_name('XGBoost model')
+        XGBOOST_SUPPORTED_MODEL_FILE_EXTENSIONS = ['.pkl', '.joblib', '.bst']
+        container_image_uri = aiplatform.helpers.get_prebuilt_prediction_container_uri(region=location, framework='xgboost', framework_version=xgboost_version or '1.4', accelerator='cpu')
         model_file_path_obj = pathlib.Path(model_file_path)
         if not model_file_path_obj.is_file():
-            raise ValueError(
-                f"model_file_path path must point to a file: '{model_file_path}'"
-            )
-
+            raise ValueError(f"model_file_path path must point to a file: '{model_file_path}'")
         model_file_extension = model_file_path_obj.suffix
         if model_file_extension not in XGBOOST_SUPPORTED_MODEL_FILE_EXTENSIONS:
-            _LOGGER.warning(
-                f"Only the following XGBoost model file extensions are currently supported: '{XGBOOST_SUPPORTED_MODEL_FILE_EXTENSIONS}'"
-            )
-            _LOGGER.warning(
-                "Treating the model file as a binary serialized XGBoost Booster."
-            )
-            model_file_extension = ".bst"
-
-        # Preparing model directory
-        # We cannot clean up the directory immediately after calling Model.upload since
-        # that call may be asynchronous and return before the model file has been read.
-        # To work around this, we make this method asynchronous (decorate with @base.optional_sync)
-        # but call Model.upload with sync=True.
+            _LOGGER.warning(f"Only the following XGBoost model file extensions are currently supported: '{XGBOOST_SUPPORTED_MODEL_FILE_EXTENSIONS}'")
+            _LOGGER.warning('Treating the model file as a binary serialized XGBoost Booster.')
+            model_file_extension = '.bst'
         with tempfile.TemporaryDirectory() as prepared_model_dir:
-            prepared_model_file_path = pathlib.Path(prepared_model_dir) / (
-                "model" + model_file_extension
-            )
+            prepared_model_file_path = pathlib.Path(prepared_model_dir) / ('model' + model_file_extension)
             shutil.copy(model_file_path_obj, prepared_model_file_path)
-
-            return cls.upload(
-                serving_container_image_uri=container_image_uri,
-                artifact_uri=prepared_model_dir,
-                display_name=display_name,
-                description=description,
-                model_id=model_id,
-                parent_model=parent_model,
-                is_default_version=is_default_version,
-                version_aliases=version_aliases,
-                version_description=version_description,
-                instance_schema_uri=instance_schema_uri,
-                parameters_schema_uri=parameters_schema_uri,
-                prediction_schema_uri=prediction_schema_uri,
-                explanation_metadata=explanation_metadata,
-                explanation_parameters=explanation_parameters,
-                project=project,
-                location=location,
-                credentials=credentials,
-                labels=labels,
-                encryption_spec_key_name=encryption_spec_key_name,
-                staging_bucket=staging_bucket,
-                sync=True,
-                upload_request_timeout=upload_request_timeout,
-            )
+            return cls.upload(serving_container_image_uri=container_image_uri, artifact_uri=prepared_model_dir, display_name=display_name, description=description, model_id=model_id, parent_model=parent_model, is_default_version=is_default_version, version_aliases=version_aliases, version_description=version_description, instance_schema_uri=instance_schema_uri, parameters_schema_uri=parameters_schema_uri, prediction_schema_uri=prediction_schema_uri, explanation_metadata=explanation_metadata, explanation_parameters=explanation_parameters, project=project, location=location, credentials=credentials, labels=labels, encryption_spec_key_name=encryption_spec_key_name, staging_bucket=staging_bucket, sync=True, upload_request_timeout=upload_request_timeout)
 
     @classmethod
     @base.optional_sync()
-    def upload_scikit_learn_model_file(
-        cls,
-        model_file_path: str,
-        sklearn_version: Optional[str] = None,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        model_id: Optional[str] = None,
-        parent_model: Optional[str] = None,
-        is_default_version: Optional[bool] = True,
-        version_aliases: Optional[Sequence[str]] = None,
-        version_description: Optional[str] = None,
-        instance_schema_uri: Optional[str] = None,
-        parameters_schema_uri: Optional[str] = None,
-        prediction_schema_uri: Optional[str] = None,
-        explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata] = None,
-        explanation_parameters: Optional[
-            aiplatform.explain.ExplanationParameters
-        ] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-        labels: Optional[Dict[str, str]] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        staging_bucket: Optional[str] = None,
-        sync=True,
-        upload_request_timeout: Optional[float] = None,
-    ) -> "Model":
+    def upload_scikit_learn_model_file(cls, model_file_path: str, sklearn_version: Optional[str]=None, display_name: Optional[str]=None, description: Optional[str]=None, model_id: Optional[str]=None, parent_model: Optional[str]=None, is_default_version: Optional[bool]=True, version_aliases: Optional[Sequence[str]]=None, version_description: Optional[str]=None, instance_schema_uri: Optional[str]=None, parameters_schema_uri: Optional[str]=None, prediction_schema_uri: Optional[str]=None, explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata]=None, explanation_parameters: Optional[aiplatform.explain.ExplanationParameters]=None, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None, labels: Optional[Dict[str, str]]=None, encryption_spec_key_name: Optional[str]=None, staging_bucket: Optional[str]=None, sync=True, upload_request_timeout: Optional[float]=None) -> 'Model':
         """Uploads a model and returns a Model representing the uploaded Model
         resource.
 
@@ -7165,101 +4760,24 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 is not. Also if model directory does not contain a supported model file.
         """
         if not display_name:
-            display_name = cls._generate_display_name("Scikit-Learn model")
-
-        SKLEARN_SUPPORTED_MODEL_FILE_EXTENSIONS = [
-            ".pkl",
-            ".joblib",
-        ]
-
-        container_image_uri = aiplatform.helpers.get_prebuilt_prediction_container_uri(
-            region=location,
-            framework="sklearn",
-            framework_version=sklearn_version or "1.0",
-            accelerator="cpu",
-        )
-
+            display_name = cls._generate_display_name('Scikit-Learn model')
+        SKLEARN_SUPPORTED_MODEL_FILE_EXTENSIONS = ['.pkl', '.joblib']
+        container_image_uri = aiplatform.helpers.get_prebuilt_prediction_container_uri(region=location, framework='sklearn', framework_version=sklearn_version or '1.0', accelerator='cpu')
         model_file_path_obj = pathlib.Path(model_file_path)
         if not model_file_path_obj.is_file():
-            raise ValueError(
-                f"model_file_path path must point to a file: '{model_file_path}'"
-            )
-
+            raise ValueError(f"model_file_path path must point to a file: '{model_file_path}'")
         model_file_extension = model_file_path_obj.suffix
         if model_file_extension not in SKLEARN_SUPPORTED_MODEL_FILE_EXTENSIONS:
-            _LOGGER.warning(
-                f"Only the following Scikit-learn model file extensions are currently supported: '{SKLEARN_SUPPORTED_MODEL_FILE_EXTENSIONS}'"
-            )
-            _LOGGER.warning(
-                "Treating the model file as a pickle serialized Scikit-learn model."
-            )
-            model_file_extension = ".pkl"
-
-        # Preparing model directory
-        # We cannot clean up the directory immediately after calling Model.upload since
-        # that call may be asynchronous and return before the model file has been read.
-        # To work around this, we make this method asynchronous (decorate with @base.optional_sync)
-        # but call Model.upload with sync=True.
+            _LOGGER.warning(f"Only the following Scikit-learn model file extensions are currently supported: '{SKLEARN_SUPPORTED_MODEL_FILE_EXTENSIONS}'")
+            _LOGGER.warning('Treating the model file as a pickle serialized Scikit-learn model.')
+            model_file_extension = '.pkl'
         with tempfile.TemporaryDirectory() as prepared_model_dir:
-            prepared_model_file_path = pathlib.Path(prepared_model_dir) / (
-                "model" + model_file_extension
-            )
+            prepared_model_file_path = pathlib.Path(prepared_model_dir) / ('model' + model_file_extension)
             shutil.copy(model_file_path_obj, prepared_model_file_path)
-
-            return cls.upload(
-                serving_container_image_uri=container_image_uri,
-                artifact_uri=prepared_model_dir,
-                display_name=display_name,
-                description=description,
-                model_id=model_id,
-                parent_model=parent_model,
-                is_default_version=is_default_version,
-                version_aliases=version_aliases,
-                version_description=version_description,
-                instance_schema_uri=instance_schema_uri,
-                parameters_schema_uri=parameters_schema_uri,
-                prediction_schema_uri=prediction_schema_uri,
-                explanation_metadata=explanation_metadata,
-                explanation_parameters=explanation_parameters,
-                project=project,
-                location=location,
-                credentials=credentials,
-                labels=labels,
-                encryption_spec_key_name=encryption_spec_key_name,
-                staging_bucket=staging_bucket,
-                sync=True,
-                upload_request_timeout=upload_request_timeout,
-            )
+            return cls.upload(serving_container_image_uri=container_image_uri, artifact_uri=prepared_model_dir, display_name=display_name, description=description, model_id=model_id, parent_model=parent_model, is_default_version=is_default_version, version_aliases=version_aliases, version_description=version_description, instance_schema_uri=instance_schema_uri, parameters_schema_uri=parameters_schema_uri, prediction_schema_uri=prediction_schema_uri, explanation_metadata=explanation_metadata, explanation_parameters=explanation_parameters, project=project, location=location, credentials=credentials, labels=labels, encryption_spec_key_name=encryption_spec_key_name, staging_bucket=staging_bucket, sync=True, upload_request_timeout=upload_request_timeout)
 
     @classmethod
-    def upload_tensorflow_saved_model(
-        cls,
-        saved_model_dir: str,
-        tensorflow_version: Optional[str] = None,
-        use_gpu: bool = False,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        model_id: Optional[str] = None,
-        parent_model: Optional[str] = None,
-        is_default_version: Optional[bool] = True,
-        version_aliases: Optional[Sequence[str]] = None,
-        version_description: Optional[str] = None,
-        instance_schema_uri: Optional[str] = None,
-        parameters_schema_uri: Optional[str] = None,
-        prediction_schema_uri: Optional[str] = None,
-        explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata] = None,
-        explanation_parameters: Optional[
-            aiplatform.explain.ExplanationParameters
-        ] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-        labels: Optional[Dict[str, str]] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        staging_bucket: Optional[str] = None,
-        sync=True,
-        upload_request_timeout: Optional[str] = None,
-    ) -> "Model":
+    def upload_tensorflow_saved_model(cls, saved_model_dir: str, tensorflow_version: Optional[str]=None, use_gpu: bool=False, display_name: Optional[str]=None, description: Optional[str]=None, model_id: Optional[str]=None, parent_model: Optional[str]=None, is_default_version: Optional[bool]=True, version_aliases: Optional[Sequence[str]]=None, version_description: Optional[str]=None, instance_schema_uri: Optional[str]=None, parameters_schema_uri: Optional[str]=None, prediction_schema_uri: Optional[str]=None, explanation_metadata: Optional[aiplatform.explain.ExplanationMetadata]=None, explanation_parameters: Optional[aiplatform.explain.ExplanationParameters]=None, project: Optional[str]=None, location: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None, labels: Optional[Dict[str, str]]=None, encryption_spec_key_name: Optional[str]=None, staging_bucket: Optional[str]=None, sync=True, upload_request_timeout: Optional[str]=None) -> 'Model':
         """Uploads a model and returns a Model representing the uploaded Model
         resource.
 
@@ -7412,49 +4930,11 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 is not. Also if model directory does not contain a supported model file.
         """
         if not display_name:
-            display_name = cls._generate_display_name("Tensorflow model")
+            display_name = cls._generate_display_name('Tensorflow model')
+        container_image_uri = aiplatform.helpers.get_prebuilt_prediction_container_uri(region=location, framework='tensorflow', framework_version=tensorflow_version or '2.7', accelerator='gpu' if use_gpu else 'cpu')
+        return cls.upload(serving_container_image_uri=container_image_uri, artifact_uri=saved_model_dir, display_name=display_name, description=description, model_id=model_id, parent_model=parent_model, is_default_version=is_default_version, version_aliases=version_aliases, version_description=version_description, instance_schema_uri=instance_schema_uri, parameters_schema_uri=parameters_schema_uri, prediction_schema_uri=prediction_schema_uri, explanation_metadata=explanation_metadata, explanation_parameters=explanation_parameters, project=project, location=location, credentials=credentials, labels=labels, encryption_spec_key_name=encryption_spec_key_name, staging_bucket=staging_bucket, sync=sync, upload_request_timeout=upload_request_timeout)
 
-        container_image_uri = aiplatform.helpers.get_prebuilt_prediction_container_uri(
-            region=location,
-            framework="tensorflow",
-            framework_version=tensorflow_version or "2.7",
-            accelerator="gpu" if use_gpu else "cpu",
-        )
-
-        return cls.upload(
-            serving_container_image_uri=container_image_uri,
-            artifact_uri=saved_model_dir,
-            display_name=display_name,
-            description=description,
-            model_id=model_id,
-            parent_model=parent_model,
-            is_default_version=is_default_version,
-            version_aliases=version_aliases,
-            version_description=version_description,
-            instance_schema_uri=instance_schema_uri,
-            parameters_schema_uri=parameters_schema_uri,
-            prediction_schema_uri=prediction_schema_uri,
-            explanation_metadata=explanation_metadata,
-            explanation_parameters=explanation_parameters,
-            project=project,
-            location=location,
-            credentials=credentials,
-            labels=labels,
-            encryption_spec_key_name=encryption_spec_key_name,
-            staging_bucket=staging_bucket,
-            sync=sync,
-            upload_request_timeout=upload_request_timeout,
-        )
-
-    # TODO(b/273499620): Add async support.
-    def copy(
-        self,
-        destination_location: str,
-        destination_model_id: Optional[str] = None,
-        destination_parent_model: Optional[str] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        copy_request_timeout: Optional[float] = None,
-    ) -> "Model":
+    def copy(self, destination_location: str, destination_model_id: Optional[str]=None, destination_parent_model: Optional[str]=None, encryption_spec_key_name: Optional[str]=None, copy_request_timeout: Optional[float]=None) -> 'Model':
         """Copys a model and returns a Model representing the copied Model
         resource. This method is a blocking call.
 
@@ -7501,73 +4981,25 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             ValueError: If both `destination_model_id` and `destination_parent_model` are set.
         """
         if destination_model_id is not None and destination_parent_model is not None:
-            raise ValueError(
-                "`destination_model_id` and `destination_parent_model` can not be set together."
-            )
-
-        parent = initializer.global_config.common_location_path(
-            initializer.global_config.project, destination_location
-        )
-
+            raise ValueError('`destination_model_id` and `destination_parent_model` can not be set together.')
+        parent = initializer.global_config.common_location_path(initializer.global_config.project, destination_location)
         source_model = self.versioned_resource_name
-
-        destination_parent_model = ModelRegistry._get_true_version_parent(
-            parent_model=destination_parent_model,
-            project=initializer.global_config.project,
-            location=destination_location,
-        )
-
-        encryption_spec = initializer.global_config.get_encryption_spec(
-            encryption_spec_key_name=encryption_spec_key_name,
-        )
-
+        destination_parent_model = ModelRegistry._get_true_version_parent(parent_model=destination_parent_model, project=initializer.global_config.project, location=destination_location)
+        encryption_spec = initializer.global_config.get_encryption_spec(encryption_spec_key_name=encryption_spec_key_name)
         if destination_model_id is not None:
-            request = gca_model_service_compat.CopyModelRequest(
-                parent=parent,
-                source_model=source_model,
-                model_id=destination_model_id,
-                encryption_spec=encryption_spec,
-            )
+            request = gca_model_service_compat.CopyModelRequest(parent=parent, source_model=source_model, model_id=destination_model_id, encryption_spec=encryption_spec)
         else:
-            request = gca_model_service_compat.CopyModelRequest(
-                parent=parent,
-                source_model=source_model,
-                parent_model=destination_parent_model,
-                encryption_spec=encryption_spec,
-            )
-
-        api_client = initializer.global_config.create_client(
-            client_class=utils.ModelClientWithOverride,
-            location_override=destination_location,
-            credentials=initializer.global_config.credentials,
-        )
-
-        _LOGGER.log_action_start_against_resource("Copying", "", self)
-
-        lro = api_client.copy_model(
-            request=request,
-            timeout=copy_request_timeout,
-        )
-
-        _LOGGER.log_action_started_against_resource_with_lro(
-            "Copy", "", self.__class__, lro
-        )
-
+            request = gca_model_service_compat.CopyModelRequest(parent=parent, source_model=source_model, parent_model=destination_parent_model, encryption_spec=encryption_spec)
+        api_client = initializer.global_config.create_client(client_class=utils.ModelClientWithOverride, location_override=destination_location, credentials=initializer.global_config.credentials)
+        _LOGGER.log_action_start_against_resource('Copying', '', self)
+        lro = api_client.copy_model(request=request, timeout=copy_request_timeout)
+        _LOGGER.log_action_started_against_resource_with_lro('Copy', '', self.__class__, lro)
         model_copy_response = lro.result(timeout=None)
-
-        this_model = models.Model(
-            model_copy_response.model,
-            version=model_copy_response.model_version_id,
-            location=destination_location,
-        )
-
-        _LOGGER.log_action_completed_against_resource("", "copied", this_model)
-
+        this_model = models.Model(model_copy_response.model, version=model_copy_response.model_version_id, location=destination_location)
+        _LOGGER.log_action_completed_against_resource('', 'copied', this_model)
         return this_model
 
-    def list_model_evaluations(
-        self,
-    ) -> List["model_evaluation.ModelEvaluation"]:
+    def list_model_evaluations(self) -> List['model_evaluation.ModelEvaluation']:
         """List all Model Evaluation resources associated with this model.
         If this Model resource was instantiated with a version, the Model
         Evaluation resources for that version will be returned. If no version
@@ -7585,16 +5017,9 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             List[model_evaluation.ModelEvaluation]:
                 List of ModelEvaluation resources for the model.
         """
+        return model_evaluation.ModelEvaluation._list(parent=self.versioned_resource_name, credentials=self.credentials)
 
-        return model_evaluation.ModelEvaluation._list(
-            parent=self.versioned_resource_name,
-            credentials=self.credentials,
-        )
-
-    def get_model_evaluation(
-        self,
-        evaluation_id: Optional[str] = None,
-    ) -> Optional[model_evaluation.ModelEvaluation]:
+    def get_model_evaluation(self, evaluation_id: Optional[str]=None) -> Optional[model_evaluation.ModelEvaluation]:
         """Returns a ModelEvaluation resource and instantiates its representation.
         If no evaluation_id is passed, it will return the first evaluation associated
         with this model. If the aiplatform.Model resource was instantiated with a
@@ -7622,52 +5047,20 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
             model_evaluation.ModelEvaluation:
                 Instantiated representation of the ModelEvaluation resource.
         """
-
         evaluations = self.list_model_evaluations()
-
         if not evaluation_id:
             if len(evaluations) > 1:
-                _LOGGER.warning(
-                    f"Your model has more than one model evaluation, this is returning only one evaluation resource: {evaluations[0].resource_name}"
-                )
+                _LOGGER.warning(f'Your model has more than one model evaluation, this is returning only one evaluation resource: {evaluations[0].resource_name}')
             _ipython_utils.display_model_evaluation_button(evaluations[0])
             return evaluations[0]
         else:
             resource_uri_parts = self._parse_resource_name(self.resource_name)
-            evaluation_resource_name = (
-                model_evaluation.ModelEvaluation._format_resource_name(
-                    **resource_uri_parts,
-                    evaluation=evaluation_id,
-                )
-            )
-
-            evaluation = model_evaluation.ModelEvaluation(
-                evaluation_name=evaluation_resource_name,
-                credentials=self.credentials,
-            )
+            evaluation_resource_name = model_evaluation.ModelEvaluation._format_resource_name(**resource_uri_parts, evaluation=evaluation_id)
+            evaluation = model_evaluation.ModelEvaluation(evaluation_name=evaluation_resource_name, credentials=self.credentials)
             _ipython_utils.display_model_evaluation_button(evaluation)
             return evaluation
 
-    def evaluate(
-        self,
-        prediction_type: str,
-        target_field_name: str,
-        gcs_source_uris: Optional[List[str]] = None,
-        bigquery_source_uri: Optional[str] = None,
-        bigquery_destination_output_uri: Optional[str] = None,
-        class_labels: Optional[List[str]] = None,
-        prediction_label_column: Optional[str] = None,
-        prediction_score_column: Optional[str] = None,
-        staging_bucket: Optional[str] = None,
-        service_account: Optional[str] = None,
-        generate_feature_attributions: bool = False,
-        evaluation_pipeline_display_name: Optional[str] = None,
-        evaluation_metrics_display_name: Optional[str] = None,
-        network: Optional[str] = None,
-        encryption_spec_key_name: Optional[str] = None,
-        experiment: Optional[Union[str, "aiplatform.Experiment"]] = None,
-        enable_caching: Optional[bool] = None,
-    ) -> "model_evaluation._ModelEvaluationJob":
+    def evaluate(self, prediction_type: str, target_field_name: str, gcs_source_uris: Optional[List[str]]=None, bigquery_source_uri: Optional[str]=None, bigquery_destination_output_uri: Optional[str]=None, class_labels: Optional[List[str]]=None, prediction_label_column: Optional[str]=None, prediction_score_column: Optional[str]=None, staging_bucket: Optional[str]=None, service_account: Optional[str]=None, generate_feature_attributions: bool=False, evaluation_pipeline_display_name: Optional[str]=None, evaluation_metrics_display_name: Optional[str]=None, network: Optional[str]=None, encryption_spec_key_name: Optional[str]=None, experiment: Optional[Union[str, 'aiplatform.Experiment']]=None, enable_caching: Optional[bool]=None) -> 'model_evaluation._ModelEvaluationJob':
         """Creates a model evaluation job running on Vertex Pipelines and returns the resulting
         ModelEvaluationJob resource.
 
@@ -7771,130 +5164,52 @@ class Model(base.VertexAiResourceNounWithFutureManager, base.PreviewMixin):
                 If the provided `prediction_type` is not valid.
                 If the provided `data_source_uris` don't start with 'gs://'.
         """
-
         if (gcs_source_uris is None) == (bigquery_source_uri is None):
-            raise ValueError(
-                "Exactly one of `gcs_source_uris` or `bigquery_source_uri` must be provided."
-            )
-
+            raise ValueError('Exactly one of `gcs_source_uris` or `bigquery_source_uri` must be provided.')
         if isinstance(gcs_source_uris, str):
             gcs_source_uris = [gcs_source_uris]
-
-        if bigquery_source_uri and not isinstance(bigquery_source_uri, str):
-            raise ValueError("The provided `bigquery_source_uri` must be a string.")
-
-        if bigquery_source_uri and not bigquery_destination_output_uri:
-            raise ValueError(
-                "`bigquery_destination_output_uri` must be provided if `bigquery_source_uri` is used as the data source."
-            )
-
-        if gcs_source_uris is not None and not all(
-            uri.startswith("gs://") for uri in gcs_source_uris
-        ):
+        if bigquery_source_uri and (not isinstance(bigquery_source_uri, str)):
+            raise ValueError('The provided `bigquery_source_uri` must be a string.')
+        if bigquery_source_uri and (not bigquery_destination_output_uri):
+            raise ValueError('`bigquery_destination_output_uri` must be provided if `bigquery_source_uri` is used as the data source.')
+        if gcs_source_uris is not None and (not all((uri.startswith('gs://') for uri in gcs_source_uris))):
             raise ValueError("`gcs_source_uris` must start with 'gs://'.")
-
-        if bigquery_source_uri is not None and not bigquery_source_uri.startswith(
-            "bq://"
-        ):
-            raise ValueError(
-                "`bigquery_source_uri` and `bigquery_destination_output_uri` must start with 'bq://'"
-            )
-
-        if (
-            bigquery_destination_output_uri is not None
-            and not bigquery_destination_output_uri.startswith("bq://")
-        ):
-            raise ValueError(
-                "`bigquery_source_uri` and `bigquery_destination_output_uri` must start with 'bq://'"
-            )
-
-        SUPPORTED_INSTANCES_FORMAT_FILE_EXTENSIONS = [".jsonl", ".csv"]
-
+        if bigquery_source_uri is not None and (not bigquery_source_uri.startswith('bq://')):
+            raise ValueError("`bigquery_source_uri` and `bigquery_destination_output_uri` must start with 'bq://'")
+        if bigquery_destination_output_uri is not None and (not bigquery_destination_output_uri.startswith('bq://')):
+            raise ValueError("`bigquery_source_uri` and `bigquery_destination_output_uri` must start with 'bq://'")
+        SUPPORTED_INSTANCES_FORMAT_FILE_EXTENSIONS = ['.jsonl', '.csv']
         if not staging_bucket and initializer.global_config.staging_bucket:
             staging_bucket = initializer.global_config.staging_bucket
-        elif not staging_bucket and not initializer.global_config.staging_bucket:
-            raise ValueError(
-                "Please provide `evaluation_staging_bucket` when calling evaluate or set one using aiplatform.init(staging_bucket=...)"
-            )
-
+        elif not staging_bucket and (not initializer.global_config.staging_bucket):
+            raise ValueError('Please provide `evaluation_staging_bucket` when calling evaluate or set one using aiplatform.init(staging_bucket=...)')
         if prediction_type not in _SUPPORTED_EVAL_PREDICTION_TYPES:
-            raise ValueError(
-                f"Please provide a supported model prediction type, one of: {_SUPPORTED_EVAL_PREDICTION_TYPES}."
-            )
-
+            raise ValueError(f'Please provide a supported model prediction type, one of: {_SUPPORTED_EVAL_PREDICTION_TYPES}.')
         if generate_feature_attributions:
             if not self._gca_resource.explanation_spec:
-                raise ValueError(
-                    "To generate feature attributions with your evaluation, call evaluate on a model with an explanation spec. To run evaluation on the current model, call evaluate with `generate_feature_attributions=False`."
-                )
-
+                raise ValueError('To generate feature attributions with your evaluation, call evaluate on a model with an explanation spec. To run evaluation on the current model, call evaluate with `generate_feature_attributions=False`.')
         instances_format = None
-
         if gcs_source_uris:
             data_file_path_obj = pathlib.Path(gcs_source_uris[0])
-
             data_file_extension = data_file_path_obj.suffix
             if data_file_extension not in SUPPORTED_INSTANCES_FORMAT_FILE_EXTENSIONS:
-                _LOGGER.warning(
-                    f"Only the following data file extensions are currently supported: '{SUPPORTED_INSTANCES_FORMAT_FILE_EXTENSIONS}'"
-                )
+                _LOGGER.warning(f"Only the following data file extensions are currently supported: '{SUPPORTED_INSTANCES_FORMAT_FILE_EXTENSIONS}'")
             else:
                 instances_format = data_file_extension[1:]
-
         elif bigquery_source_uri:
-            instances_format = "bigquery"
-
-        if (
-            self._gca_resource.metadata_schema_uri
-            == "https://storage.googleapis.com/google-cloud-aiplatform/schema/model/metadata/automl_tabular_1.0.0.yaml"
-        ):
-            model_type = "automl_tabular"
+            instances_format = 'bigquery'
+        if self._gca_resource.metadata_schema_uri == 'https://storage.googleapis.com/google-cloud-aiplatform/schema/model/metadata/automl_tabular_1.0.0.yaml':
+            model_type = 'automl_tabular'
         else:
-            model_type = "other"
+            model_type = 'other'
+        if model_type == 'other' and prediction_type == 'classification' and (not class_labels):
+            raise ValueError('Please provide `class_labels` when running evaluation on a custom classification model.')
+        return model_evaluation._ModelEvaluationJob.submit(model_name=self.versioned_resource_name, prediction_type=prediction_type, target_field_name=target_field_name, gcs_source_uris=gcs_source_uris, bigquery_source_uri=bigquery_source_uri, batch_predict_bigquery_destination_output_uri=bigquery_destination_output_uri, class_labels=class_labels, prediction_label_column=prediction_label_column, prediction_score_column=prediction_score_column, service_account=service_account, pipeline_root=staging_bucket, instances_format=instances_format, model_type=model_type, generate_feature_attributions=generate_feature_attributions, evaluation_pipeline_display_name=evaluation_pipeline_display_name, evaluation_metrics_display_name=evaluation_metrics_display_name, network=network, encryption_spec_key_name=encryption_spec_key_name, credentials=self.credentials, experiment=experiment, enable_caching=enable_caching)
 
-        if (
-            model_type == "other"
-            and prediction_type == "classification"
-            and not class_labels
-        ):
-            raise ValueError(
-                "Please provide `class_labels` when running evaluation on a custom classification model."
-            )
-
-        return model_evaluation._ModelEvaluationJob.submit(
-            model_name=self.versioned_resource_name,
-            prediction_type=prediction_type,
-            target_field_name=target_field_name,
-            gcs_source_uris=gcs_source_uris,
-            bigquery_source_uri=bigquery_source_uri,
-            batch_predict_bigquery_destination_output_uri=bigquery_destination_output_uri,
-            class_labels=class_labels,
-            prediction_label_column=prediction_label_column,
-            prediction_score_column=prediction_score_column,
-            service_account=service_account,
-            pipeline_root=staging_bucket,
-            instances_format=instances_format,
-            model_type=model_type,
-            generate_feature_attributions=generate_feature_attributions,
-            evaluation_pipeline_display_name=evaluation_pipeline_display_name,
-            evaluation_metrics_display_name=evaluation_metrics_display_name,
-            network=network,
-            encryption_spec_key_name=encryption_spec_key_name,
-            credentials=self.credentials,
-            experiment=experiment,
-            enable_caching=enable_caching,
-        )
-
-
-# TODO (b/232546878): Async support
 class ModelRegistry:
-    def __init__(
-        self,
-        model: Union[Model, str],
-        location: Optional[str] = None,
-        project: Optional[str] = None,
-        credentials: Optional[auth_credentials.Credentials] = None,
-    ):
+
+    @codeflash_capture(function_name='ModelRegistry.__init__', tmp_dir_path='/tmp/codeflash_rnon9p_c/test_return_values', tests_root='/home/ubuntu/work/repo/tests', is_fto=False)
+    def __init__(self, model: Union[Model, str], location: Optional[str]=None, project: Optional[str]=None, credentials: Optional[auth_credentials.Credentials]=None):
         """Creates a ModelRegistry instance for version management of a registered model.
 
         Args:
@@ -7913,31 +5228,14 @@ class ModelRegistry:
                 Optional. Custom credentials to use with model access. If not set,
                 credentials set in aiplatform.init will be used.
         """
-
         if isinstance(model, Model):
             self.model_resource_name = model.resource_name
         else:
-            self.model_resource_name = utils.full_resource_name(
-                resource_name=model,
-                resource_noun="models",
-                parse_resource_name_method=Model._parse_resource_name,
-                format_resource_name_method=Model._format_resource_name,
-                project=project,
-                location=location,
-                resource_id_validator=base.VertexAiResourceNoun._revisioned_resource_id_validator,
-            )
-
-        self.credentials = credentials or (
-            model.credentials
-            if isinstance(model, Model)
-            else initializer.global_config.credentials
-        )
+            self.model_resource_name = utils.full_resource_name(resource_name=model, resource_noun='models', parse_resource_name_method=Model._parse_resource_name, format_resource_name_method=Model._format_resource_name, project=project, location=location, resource_id_validator=base.VertexAiResourceNoun._revisioned_resource_id_validator)
+        self.credentials = credentials or (model.credentials if isinstance(model, Model) else initializer.global_config.credentials)
         self.client = Model._instantiate_client(location, self.credentials)
 
-    def get_model(
-        self,
-        version: Optional[str] = None,
-    ) -> Model:
+    def get_model(self, version: Optional[str]=None) -> Model:
         """Gets a registered model with optional version.
 
         Args:
@@ -7948,14 +5246,9 @@ class ModelRegistry:
         Returns:
             Model: An instance of a Model from this ModelRegistry.
         """
-        return Model(
-            self.model_resource_name, version=version, credentials=self.credentials
-        )
+        return Model(self.model_resource_name, version=version, credentials=self.credentials)
 
-    def list_versions(
-        self,
-        filter: Optional[str] = None,
-    ) -> List[VersionInfo]:
+    def list_versions(self, filter: Optional[str]=None) -> List[VersionInfo]:
         """Lists the versions and version info of a model.
 
         Args:
@@ -7975,37 +5268,13 @@ class ModelRegistry:
                 A list of VersionInfo, each containing
                 info about specific model versions.
         """
-
-        _LOGGER.info(f"Getting versions for {self.model_resource_name}")
-
-        request = gca_model_service_compat.ListModelVersionsRequest(
-            name=self.model_resource_name,
-            filter=filter,
-        )
-
-        page_result = self.client.list_model_versions(
-            request=request,
-        )
-
-        versions = [
-            VersionInfo(
-                version_id=model.version_id,
-                version_create_time=model.version_create_time,
-                version_update_time=model.version_update_time,
-                model_display_name=model.display_name,
-                model_resource_name=self._parse_versioned_name(model.name)[0],
-                version_aliases=model.version_aliases,
-                version_description=model.version_description,
-            )
-            for model in page_result
-        ]
-
+        _LOGGER.info(f'Getting versions for {self.model_resource_name}')
+        request = gca_model_service_compat.ListModelVersionsRequest(name=self.model_resource_name, filter=filter)
+        page_result = self.client.list_model_versions(request=request)
+        versions = [VersionInfo(version_id=model.version_id, version_create_time=model.version_create_time, version_update_time=model.version_update_time, model_display_name=model.display_name, model_resource_name=self._parse_versioned_name(model.name)[0], version_aliases=model.version_aliases, version_description=model.version_description) for model in page_result]
         return versions
 
-    def get_version_info(
-        self,
-        version: str,
-    ) -> VersionInfo:
+    def get_version_info(self, version: str) -> VersionInfo:
         """Gets information about a specific model version.
 
         Args:
@@ -8014,27 +5283,11 @@ class ModelRegistry:
         Returns:
             VersionInfo: Contains info about the model version.
         """
+        _LOGGER.info(f'Getting version {version} info for {self.model_resource_name}')
+        model = self.client.get_model(name=self._get_versioned_name(self.model_resource_name, version))
+        return VersionInfo(version_id=model.version_id, version_create_time=model.version_create_time, version_update_time=model.version_update_time, model_display_name=model.display_name, model_resource_name=self._parse_versioned_name(model.name)[0], version_aliases=model.version_aliases, version_description=model.version_description)
 
-        _LOGGER.info(f"Getting version {version} info for {self.model_resource_name}")
-
-        model = self.client.get_model(
-            name=self._get_versioned_name(self.model_resource_name, version),
-        )
-
-        return VersionInfo(
-            version_id=model.version_id,
-            version_create_time=model.version_create_time,
-            version_update_time=model.version_update_time,
-            model_display_name=model.display_name,
-            model_resource_name=self._parse_versioned_name(model.name)[0],
-            version_aliases=model.version_aliases,
-            version_description=model.version_description,
-        )
-
-    def delete_version(
-        self,
-        version: str,
-    ) -> None:
+    def delete_version(self, version: str) -> None:
         """Deletes a model version from the registry.
 
         Cannot delete a version if it is the last remaining version.
@@ -8043,23 +5296,12 @@ class ModelRegistry:
         Args:
             version (str): Required. The model version ID or alias to delete.
         """
-
-        lro = self.client.delete_model_version(
-            name=self._get_versioned_name(self.model_resource_name, version),
-        )
-
-        _LOGGER.info(f"Deleting version {version} for {self.model_resource_name}")
-
+        lro = self.client.delete_model_version(name=self._get_versioned_name(self.model_resource_name, version))
+        _LOGGER.info(f'Deleting version {version} for {self.model_resource_name}')
         lro.result()
+        _LOGGER.info(f'Deleted version {version} for {self.model_resource_name}')
 
-        _LOGGER.info(f"Deleted version {version} for {self.model_resource_name}")
-
-    def update_version(
-        self,
-        version: str,
-        version_description: Optional[str] = None,
-        labels: Optional[Dict[str, str]] = None,
-    ) -> None:
+    def update_version(self, version: str, version_description: Optional[str]=None, labels: Optional[Dict[str, str]]=None) -> None:
         """Updates a model version.
 
         Args:
@@ -8080,96 +5322,53 @@ class ModelRegistry:
         Raises:
             ValueError: If `labels` is not the correct format.
         """
-
         current_model_proto = self.get_model(version).gca_resource
         copied_model_proto = current_model_proto.__class__(current_model_proto)
-
         update_mask: List[str] = []
-
         if version_description:
             copied_model_proto.version_description = version_description
-            update_mask.append("version_description")
-
+            update_mask.append('version_description')
         if labels:
             utils.validate_labels(labels)
-
             copied_model_proto.labels = labels
-            update_mask.append("labels")
-
+            update_mask.append('labels')
         update_mask = field_mask_pb2.FieldMask(paths=update_mask)
         versioned_name = self._get_versioned_name(self.model_resource_name, version)
+        _LOGGER.info(f'Updating model {versioned_name}')
+        self.client.update_model(model=copied_model_proto, update_mask=update_mask)
+        _LOGGER.info(f'Completed updating model {versioned_name}')
 
-        _LOGGER.info(f"Updating model {versioned_name}")
-
-        self.client.update_model(
-            model=copied_model_proto,
-            update_mask=update_mask,
-        )
-
-        _LOGGER.info(f"Completed updating model {versioned_name}")
-
-    def add_version_aliases(
-        self,
-        new_aliases: List[str],
-        version: str,
-    ) -> None:
+    def add_version_aliases(self, new_aliases: List[str], version: str) -> None:
         """Adds version alias(es) to a model version.
 
         Args:
             new_aliases (List[str]): Required. The alias(es) to add to a model version.
             version (str): Required. The version ID to receive the new alias(es).
         """
+        self._merge_version_aliases(version_aliases=new_aliases, version=version)
 
-        self._merge_version_aliases(
-            version_aliases=new_aliases,
-            version=version,
-        )
-
-    def remove_version_aliases(
-        self,
-        target_aliases: List[str],
-        version: str,
-    ) -> None:
+    def remove_version_aliases(self, target_aliases: List[str], version: str) -> None:
         """Removes version alias(es) from a model version.
 
         Args:
             target_aliases (List[str]): Required. The alias(es) to remove from a model version.
             version (str): Required. The version ID to be stripped of the target alias(es).
         """
+        self._merge_version_aliases(version_aliases=[f'-{alias}' for alias in target_aliases], version=version)
 
-        self._merge_version_aliases(
-            version_aliases=[f"-{alias}" for alias in target_aliases],
-            version=version,
-        )
-
-    def _merge_version_aliases(
-        self,
-        version_aliases: List[str],
-        version: str,
-    ) -> None:
+    def _merge_version_aliases(self, version_aliases: List[str], version: str) -> None:
         """Merges a list of version aliases with a model's existing alias list.
 
         Args:
             version_aliases (List[str]): Required. The version alias change list.
             version (str): Required. The version ID to have its alias list changed.
         """
-
-        _LOGGER.info(f"Merging version aliases for {self.model_resource_name}")
-
-        self.client.merge_version_aliases(
-            name=self._get_versioned_name(self.model_resource_name, version),
-            version_aliases=version_aliases,
-        )
-
-        _LOGGER.info(
-            f"Completed merging version aliases for {self.model_resource_name}"
-        )
+        _LOGGER.info(f'Merging version aliases for {self.model_resource_name}')
+        self.client.merge_version_aliases(name=self._get_versioned_name(self.model_resource_name, version), version_aliases=version_aliases)
+        _LOGGER.info(f'Completed merging version aliases for {self.model_resource_name}')
 
     @staticmethod
-    def _get_versioned_name(
-        resource_name: str,
-        version: Optional[str] = None,
-    ) -> str:
+    def _get_versioned_name(resource_name: str, version: Optional[str]=None) -> str:
         """Creates a versioned form of a model resource name.
 
         Args:
@@ -8180,13 +5379,11 @@ class ModelRegistry:
             versioned_name (str): The versioned resource name in revisioned format.
         """
         if version:
-            return f"{resource_name}@{version}"
+            return f'{resource_name}@{version}'
         return resource_name
 
     @staticmethod
-    def _parse_versioned_name(
-        model_name: str,
-    ) -> Tuple[str, Optional[str]]:
+    def _parse_versioned_name(model_name: str) -> Tuple[str, Optional[str]]:
         """Return a model name and, if included in the model name, a model version.
 
         Args:
@@ -8201,21 +5398,15 @@ class ModelRegistry:
         Raises:
             ValueError: If the `model_name` is invalid and contains too many '@' symbols.
         """
-        if "@" not in model_name:
-            return model_name, None
-        elif model_name.count("@") > 1:
-            raise ValueError(
-                f"Received an invalid model_name with too many `@`s: {model_name}"
-            )
+        if '@' not in model_name:
+            return (model_name, None)
+        elif model_name.count('@') > 1:
+            raise ValueError(f'Received an invalid model_name with too many `@`s: {model_name}')
         else:
-            return model_name.split("@")
+            return model_name.split('@')
 
     @staticmethod
-    def _get_true_version_parent(
-        parent_model: Optional[str] = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-    ) -> Optional[str]:
+    def _get_true_version_parent(parent_model: Optional[str]=None, project: Optional[str]=None, location: Optional[str]=None) -> Optional[str]:
         """Gets the true `parent_model` with full resource name.
 
         Args:
@@ -8229,22 +5420,12 @@ class ModelRegistry:
                 Optional. The true resource name of the parent model, if one should exist.
         """
         if parent_model:
-            existing_resource = utils.full_resource_name(
-                resource_name=parent_model,
-                resource_noun="models",
-                parse_resource_name_method=Model._parse_resource_name,
-                format_resource_name_method=Model._format_resource_name,
-                project=project,
-                location=location,
-            )
+            existing_resource = utils.full_resource_name(resource_name=parent_model, resource_noun='models', parse_resource_name_method=Model._parse_resource_name, format_resource_name_method=Model._format_resource_name, project=project, location=location)
             parent_model = existing_resource
         return parent_model
 
     @staticmethod
-    def _get_true_alias_list(
-        version_aliases: Optional[Sequence[str]] = None,
-        is_default_version: bool = True,
-    ) -> Optional[Sequence[str]]:
+    def _get_true_alias_list(version_aliases: Optional[Sequence[str]]=None, is_default_version: bool=True) -> Optional[Sequence[str]]:
         """Gets the true `version_aliases` list based on `is_default_version`.
 
         Args:
@@ -8259,8 +5440,8 @@ class ModelRegistry:
                 containing "default" if specified.
         """
         if is_default_version:
-            if version_aliases and "default" not in version_aliases:
-                version_aliases.append("default")
+            if version_aliases and 'default' not in version_aliases:
+                version_aliases.append('default')
             elif not version_aliases:
-                version_aliases = ["default"]
+                version_aliases = ['default']
         return version_aliases
