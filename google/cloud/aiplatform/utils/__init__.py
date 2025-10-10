@@ -105,6 +105,8 @@ from google.cloud.aiplatform.compat.types import (
     reservation_affinity_v1 as gca_reservation_affinity_v1,
 )
 
+_CAMEL_TO_SNAKE_RE = re.compile(r"([A-Z]+)")
+
 VertexAiServiceClient = TypeVar(
     "VertexAiServiceClient",
     # v1beta1
@@ -260,7 +262,7 @@ def convert_camel_case_resource_noun_to_snake_case(resource_noun: str) -> str:
     Returns:
         Singular snake case resource noun.
     """
-    snake_case = re.sub("([A-Z]+)", r"_\1", resource_noun).lower()
+    snake_case = _CAMEL_TO_SNAKE_RE.sub(r"_\1", resource_noun).lower()
 
     # plural to singular
     if snake_case in _SINGULAR_RESOURCE_NOUNS or not snake_case.endswith("s"):
