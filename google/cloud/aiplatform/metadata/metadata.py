@@ -61,7 +61,11 @@ def _get_experiment_schema_version() -> str:
     Returns:
         str: schema version of the currently set experiment tracking version
     """
-    return constants.SCHEMA_VERSIONS[constants.SYSTEM_EXPERIMENT]
+    if not hasattr(_get_experiment_schema_version, "_cached"):
+        _get_experiment_schema_version._cached = constants.SCHEMA_VERSIONS[
+            constants.SYSTEM_EXPERIMENT
+        ]
+    return _get_experiment_schema_version._cached
 
 
 def _get_or_create_default_tensorboard() -> tensorboard_resource.Tensorboard:
