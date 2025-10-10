@@ -100,62 +100,43 @@ def _prepare_dependency_entries(
     Returns:
         The dependency installation command used in Dockerfile.
     """
-    ret = ""
+    force_flag = "--force-reinstall" if force_reinstall else ""
+    entries = []
 
     if setup_path is not None:
-        ret += _generate_copy_command(
+        # Combine copy and RUN as a single entry for slightly reduced overhead.
+        entries.append(_generate_copy_command(
             setup_path,
             "./setup.py",
             comment="setup.py file specified, thus copy it to the docker container.",
-        ) + textwrap.dedent(
-            """
-            RUN {} install --no-cache-dir {} .
-            """.format(
-                pip_command,
-                "--force-reinstall" if force_reinstall else "",
-            )
+        ))
+        entries.append(
+            f"RUN {pip_command} install --no-cache-dir {force_flag} .\n"
         )
 
     if requirements_path is not None:
-        ret += textwrap.dedent(
-            """
-            RUN {} install --no-cache-dir {} -r {}
-            """.format(
-                pip_command,
-                "--force-reinstall" if force_reinstall else "",
-                requirements_path,
-            )
+        entries.append(
+            f"RUN {pip_command} install --no-cache-dir {force_flag} -r {requirements_path}\n"
         )
 
-    if extra_packages is not None:
-        for package in extra_packages:
-            ret += textwrap.dedent(
-                """
-                RUN {} install --no-cache-dir {} {}
-                """.format(
-                    pip_command,
-                    "--force-reinstall" if force_reinstall else "",
-                    quote(package),
-                )
-            )
+    # Use str.join to efficiently concatenate multiple lines.
+    if extra_packages:
+        # Pre-quote all packages at once. Use a generator for efficiency.
+        entries.extend(
+            f"RUN {pip_command} install --no-cache-dir {force_flag} {quote(package)}\n"
+            for package in extra_packages
+        )
 
-    if extra_requirements is not None:
-        for requirement in extra_requirements:
-            ret += textwrap.dedent(
-                """
-                RUN {} install --no-cache-dir {} {}
-                """.format(
-                    pip_command,
-                    "--force-reinstall" if force_reinstall else "",
-                    quote(requirement),
-                )
-            )
+    if extra_requirements:
+        entries.extend(
+            f"RUN {pip_command} install --no-cache-dir {force_flag} {quote(requirement)}\n"
+            for requirement in extra_requirements
+        )
 
-    if extra_dirs is not None:
-        for directory in extra_dirs:
-            ret += "\n{}\n".format(_generate_copy_command(directory, directory))
+    if extra_dirs:
+        entries.extend(f"\n{_generate_copy_command(directory, directory)}\n" for directory in extra_dirs)
 
-    return ret
+    return ''.join(entries)
 
 
 def _prepare_entrypoint(package: Package, python_command: str = "python") -> str:
@@ -181,7 +162,7 @@ def _prepare_entrypoint(package: Package, python_command: str = "python") -> str
 
     if not exec_str:
         return ""
-    return "\nENTRYPOINT {}\n".format(exec_str)
+    return f"\nENTRYPOINT {exec_str}\n"
 
 
 def _copy_source_directory() -> str:
@@ -199,7 +180,7 @@ def _copy_source_directory() -> str:
         comment="Copy the source directory into the docker container.",
     )
 
-    return "\n{}\n".format(copy_code)
+    return f"\n{copy_code}\n"
 
 
 def _prepare_exposed_ports(exposed_ports: Optional[List[int]] = None) -> str:
@@ -212,14 +193,10 @@ def _prepare_exposed_ports(exposed_ports: Optional[List[int]] = None) -> str:
     Returns:
         The generated port expose command used in Dockerfile.
     """
-    ret = ""
-
-    if exposed_ports is None:
-        return ret
-
-    for port in exposed_ports:
-        ret += "\nEXPOSE {}\n".format(port)
-    return ret
+    if not exposed_ports:
+        return ""
+    # Use str.join for batch formatting
+    return ''.join(f"\nEXPOSE {port}\n" for port in exposed_ports)
 
 
 def _prepare_environment_variables(
@@ -234,14 +211,10 @@ def _prepare_environment_variables(
     Returns:
         The generated environment variable commands used in Dockerfile.
     """
-    ret = ""
-
-    if environment_variables is None:
-        return ret
-
-    for key, value in environment_variables.items():
-        ret += f"\nENV {key}={value}\n"
-    return ret
+    if not environment_variables:
+        return ""
+    # Use str.join for performance; uses item iteration directly
+    return ''.join(f"\nENV {key}={value}\n" for key, value in environment_variables.items())
 
 
 def _get_relative_path_to_workdir(
@@ -331,36 +304,34 @@ def make_dockerfile(
     Returns:
         A string that represents the content of a Dockerfile.
     """
-    dockerfile = textwrap.dedent(
-        """
+    # Use list accumulation for better performance with large dockerfiles.
+    dockerfile_lines = []
+
+    dockerfile_lines.append(textwrap.dedent(
+        f"""
         FROM {base_image}
 
         # Keeps Python from generating .pyc files in the container
         ENV PYTHONDONTWRITEBYTECODE=1
-        """.format(
-            base_image=base_image,
-        )
-    )
-
-    dockerfile += _prepare_exposed_ports(exposed_ports)
-
-    dockerfile += _prepare_entrypoint(main_package, python_command=python_command)
-
-    dockerfile += textwrap.dedent(
         """
+    ))
+
+    dockerfile_lines.append(_prepare_exposed_ports(exposed_ports))
+
+    dockerfile_lines.append(_prepare_entrypoint(main_package, python_command=python_command))
+
+    dockerfile_lines.append(textwrap.dedent(
+        f"""
         # The directory is created by root. This sets permissions so that any user can
         # access the folder.
-        RUN mkdir -m 777 -p {workdir} {container_home}
-        WORKDIR {workdir}
-        ENV HOME={container_home}
-        """.format(
-            workdir=quote(container_workdir),
-            container_home=quote(container_home),
-        )
-    )
+        RUN mkdir -m 777 -p {quote(container_workdir)} {quote(container_home)}
+        WORKDIR {quote(container_workdir)}
+        ENV HOME={quote(container_home)}
+        """
+    ))
 
     # Installs extra requirements which do not involve user source code.
-    dockerfile += _prepare_dependency_entries(
+    dockerfile_lines.append(_prepare_dependency_entries(
         requirements_path=None,
         setup_path=None,
         extra_requirements=extra_requirements,
@@ -368,17 +339,17 @@ def make_dockerfile(
         extra_dirs=None,
         force_reinstall=True,
         pip_command=pip_command,
-    )
+    ))
 
-    dockerfile += _prepare_environment_variables(
+    dockerfile_lines.append(_prepare_environment_variables(
         environment_variables=environment_variables
-    )
+    ))
 
     # Copies user code to the image.
-    dockerfile += _copy_source_directory()
+    dockerfile_lines.append(_copy_source_directory())
 
     # Installs packages from requirements_path.
-    dockerfile += _prepare_dependency_entries(
+    dockerfile_lines.append(_prepare_dependency_entries(
         requirements_path=requirements_path,
         setup_path=None,
         extra_requirements=None,
@@ -386,10 +357,10 @@ def make_dockerfile(
         extra_dirs=None,
         force_reinstall=True,
         pip_command=pip_command,
-    )
+    ))
 
     # Installs additional packages from user code.
-    dockerfile += _prepare_dependency_entries(
+    dockerfile_lines.append(_prepare_dependency_entries(
         requirements_path=None,
         setup_path=setup_path,
         extra_requirements=None,
@@ -397,9 +368,9 @@ def make_dockerfile(
         extra_dirs=extra_dirs,
         force_reinstall=True,
         pip_command=pip_command,
-    )
+    ))
 
-    return dockerfile
+    return ''.join(dockerfile_lines)
 
 
 def build_image(
