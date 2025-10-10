@@ -105,6 +105,10 @@ from google.cloud.aiplatform.compat.types import (
     reservation_affinity_v1 as gca_reservation_affinity_v1,
 )
 
+_PROJECT_LOCATION_RE = re.compile(
+    r"^projects/(?P<project>.+?)/locations/(?P<location>.+?)(/|$)"
+)
+
 VertexAiServiceClient = TypeVar(
     "VertexAiServiceClient",
     # v1beta1
@@ -399,9 +403,7 @@ def extract_project_and_location_from_parent(
         Dict[str, str]
             A project, location dict from provided parent resource name.
     """
-    parent_resources = re.match(
-        r"^projects/(?P<project>.+?)/locations/(?P<location>.+?)(/|$)", parent
-    )
+    parent_resources = _PROJECT_LOCATION_RE.match(parent)
     return parent_resources.groupdict() if parent_resources else {}
 
 
