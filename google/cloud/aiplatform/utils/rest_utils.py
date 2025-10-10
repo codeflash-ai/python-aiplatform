@@ -25,11 +25,12 @@ def make_gcp_resource_rest_url(resource: base.VertexAiResourceNoun) -> str:
     Returns:
         The formatted url of resource.
     """
-    try:
+    if hasattr(resource, "versioned_resource_name"):
         resource_name = resource.versioned_resource_name
-    except AttributeError:
+    else:
         resource_name = resource.resource_name
-    version = resource.api_client._default_version
-    api_uri = resource.api_client.api_endpoint
+    api_client = resource.api_client
+    version = api_client._default_version
+    api_uri = api_client.api_endpoint
 
     return f"https://{api_uri}/{version}/{resource_name}"
