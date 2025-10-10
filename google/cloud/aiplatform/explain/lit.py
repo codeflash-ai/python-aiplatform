@@ -70,10 +70,12 @@ class _VertexLitDataset(lit_dataset.Dataset):
         """
         self._examples = dataset.to_dict(orient="records")
         self._column_types = column_types
+        # Cache the spec dict for faster access in `spec()`.
+        self._spec_cache = dict(column_types)
 
     def spec(self):
         """Return a spec describing dataset elements."""
-        return dict(self._column_types)
+        return self._spec_cache
 
 
 class _EndpointLitModel(lit_model.Model):
