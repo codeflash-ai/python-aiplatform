@@ -76,13 +76,17 @@ class _VertexRayClientContext(client_builder.ClientContext):
         self.shell_uri = ray_head_uris.get("RAY_HEAD_NODE_INTERACTIVE_SHELL_URI")
 
     def _context_table_template(self):
+        cls = type(self)
+        if not hasattr(cls, "_shell_uri_template"):
+            cls._shell_uri_template = VertexRayTemplate("context_shellurirow.html.j2")
+        if not hasattr(cls, "_table_template"):
+            cls._table_template = VertexRayTemplate("context_table.html.j2")
+
         shell_uri_row = None
         if self.shell_uri is not None:
-            shell_uri_row = VertexRayTemplate("context_shellurirow.html.j2").render(
-                shell_uri=self.shell_uri
-            )
+            shell_uri_row = cls._shell_uri_template.render(shell_uri=self.shell_uri)
 
-        return VertexRayTemplate("context_table.html.j2").render(
+        return cls._table_template.render(
             python_version=self.python_version,
             ray_version=self.ray_version,
             vertex_sdk_version=self.vertex_sdk_version,
