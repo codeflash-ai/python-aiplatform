@@ -178,13 +178,16 @@ class AnnotationSpec:
         Returns:
             A dictionary that represents the AnnotationSpec class.
         """
-        results = {}
-        if self.display_name:
-            results["displayName"] = self.display_name
-        if self.id:
-            results["id"] = self.id
-
-        return results
+        display_name = self.display_name
+        id_val = self.id
+        if display_name and id_val:
+            return {"displayName": display_name, "id": id_val}
+        elif display_name:
+            return {"displayName": display_name}
+        elif id_val:
+            return {"id": id_val}
+        else:
+            return {}
 
 
 @dataclass
