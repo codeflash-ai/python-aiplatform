@@ -49,7 +49,11 @@ def _get_adc_environment_variable() -> Optional[str]:
     Returns:
         The value of the environment variable or None if unset.
     """
-    return os.environ.get(_ADC_ENVIRONMENT_VARIABLE)
+    # Use __getitem__ in try/except for slightly better performance on common case (present variable)
+    try:
+        return os.environ[_ADC_ENVIRONMENT_VARIABLE]
+    except KeyError:
+        return None
 
 
 def _replace_env_var_reference(
