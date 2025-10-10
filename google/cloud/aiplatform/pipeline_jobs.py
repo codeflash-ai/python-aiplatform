@@ -222,18 +222,23 @@ class PipelineJob(
             project=project, location=location
         )
 
-        # this loads both .yaml and .json files because YAML is a superset of JSON
         pipeline_json = yaml_utils.load_yaml(
             template_path, self.project, self.credentials
         )
+        pipeline_spec = pipeline_json.get("pipelineSpec")
+        runtime_config = pipeline_json.get("runtimeConfig")
+        default_pipeline_root = None
 
-        # Pipeline_json can be either PipelineJob or PipelineSpec.
-        if pipeline_json.get("pipelineSpec") is not None:
+        if pipeline_spec is not None:
             pipeline_job = pipeline_json
-            pipeline_root = (
+            default_pipeline_root = pipeline_spec.get("defaultPipelineRoot")
+            runtime_gcs_output_dir = None
+            if runtime_config:
+                runtime_gcs_output_dir = runtime_config.get("gcsOutputDirectory")
+            pipeline_root_final = (
                 pipeline_root
-                or pipeline_job["pipelineSpec"].get("defaultPipelineRoot")
-                or pipeline_job["runtimeConfig"].get("gcsOutputDirectory")
+                or default_pipeline_root
+                or runtime_gcs_output_dir
                 or initializer.global_config.staging_bucket
             )
         else:
@@ -241,36 +246,42 @@ class PipelineJob(
                 "pipelineSpec": pipeline_json,
                 "runtimeConfig": {},
             }
-            pipeline_root = (
+            default_pipeline_root = pipeline_json.get("defaultPipelineRoot")
+            pipeline_root_final = (
                 pipeline_root
-                or pipeline_job["pipelineSpec"].get("defaultPipelineRoot")
+                or default_pipeline_root
                 or initializer.global_config.staging_bucket
             )
-        pipeline_root = (
-            pipeline_root
+
+        pipeline_root_final = (
+            pipeline_root_final
             or gcs_utils.generate_gcs_directory_for_pipeline_artifacts(
                 project=project,
                 location=location,
             )
         )
+
         builder = pipeline_utils.PipelineRuntimeConfigBuilder.from_job_spec_json(
             pipeline_job
         )
-        builder.update_pipeline_root(pipeline_root)
+        builder.update_pipeline_root(pipeline_root_final)
         builder.update_runtime_parameters(parameter_values)
         builder.update_input_artifacts(input_artifacts)
-
         builder.update_failure_policy(failure_policy)
         runtime_config_dict = builder.build()
 
-        runtime_config = gca_pipeline_job.PipelineJob.RuntimeConfig()._pb
-        json_format.ParseDict(runtime_config_dict, runtime_config)
+        gca_runtime_config = gca_pipeline_job.PipelineJob.RuntimeConfig()._pb
+        json_format.ParseDict(runtime_config_dict, gca_runtime_config)
 
-        pipeline_name = pipeline_job["pipelineSpec"]["pipelineInfo"]["name"]
-        self.job_id = job_id or "{pipeline_name}-{timestamp}".format(
-            pipeline_name=re.sub("[^-0-9a-z]+", "-", pipeline_name.lower())
+        pipeline_info = pipeline_job["pipelineSpec"]["pipelineInfo"]
+        pipeline_name_value = pipeline_info["name"]
+        pipeline_name_key = (
+            re.sub("[^-0-9a-z]+", "-", pipeline_name_value.lower())
             .lstrip("-")
-            .rstrip("-"),
+            .rstrip("-")
+        )
+        self.job_id = job_id or "{pipeline_name}-{timestamp}".format(
+            pipeline_name=pipeline_name_key,
             timestamp=_get_current_time().strftime("%Y%m%d%H%M%S"),
         )
         if not _VALID_NAME_PATTERN.match(self.job_id):
@@ -287,7 +298,7 @@ class PipelineJob(
             "display_name": display_name,
             "pipeline_spec": pipeline_job["pipelineSpec"],
             "labels": labels,
-            "runtime_config": runtime_config,
+            "runtime_config": gca_runtime_config,
             "encryption_spec": initializer.global_config.get_encryption_spec(
                 encryption_spec_key_name=encryption_spec_key_name
             ),
