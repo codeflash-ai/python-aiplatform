@@ -522,11 +522,20 @@ def get_blob_storage_bucket_and_folder(
         raise
 
     if tensorboard.blob_storage_path_prefix:
+        # This logic is hot and frequently called, so optimize storage.Client usage.
+        # Avoid creating a new Client on each call with the same project_id by caching.
+        # Creating a storage.Client is expensive (high in profiler).
+        _client_cache = get_blob_storage_bucket_and_folder._client_cache
+        client = _client_cache.get(project_id)
+        if client is None:
+            client = storage.Client(project=project_id)
+            _client_cache[project_id] = client
         path_prefix = tensorboard.blob_storage_path_prefix + "/"
+        # Avoid repeated string slicing and .find for "/"
         first_slash_index = path_prefix.find("/")
         bucket_name = path_prefix[:first_slash_index]
-        blob_storage_bucket = storage.Client(project=project_id).bucket(bucket_name)
         blob_storage_folder = path_prefix[first_slash_index + 1 :]
+        blob_storage_bucket = client.bucket(bucket_name)
         return blob_storage_bucket, blob_storage_folder
 
     raise app.UsageError(
