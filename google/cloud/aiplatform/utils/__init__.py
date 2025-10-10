@@ -370,9 +370,13 @@ def extract_bucket_and_prefix_from_gcs_path(gcs_path: str) -> Tuple[str, Optiona
     if gcs_path.endswith("/"):
         gcs_path = gcs_path[:-1]
 
-    gcs_parts = gcs_path.split("/", 1)
-    gcs_bucket = gcs_parts[0]
-    gcs_blob_prefix = None if len(gcs_parts) == 1 else gcs_parts[1]
+    slash_idx = gcs_path.find("/")
+    if slash_idx == -1:
+        gcs_bucket = gcs_path
+        gcs_blob_prefix = None
+    else:
+        gcs_bucket = gcs_path[:slash_idx]
+        gcs_blob_prefix = gcs_path[slash_idx + 1 :]
 
     return (gcs_bucket, gcs_blob_prefix)
 
