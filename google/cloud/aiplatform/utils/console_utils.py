@@ -22,7 +22,11 @@ from google.cloud.aiplatform import tensorboard
 def custom_job_console_uri(custom_job_resource_name: str) -> str:
     """Helper method to create console uri from custom job resource name."""
     fields = jobs.CustomJob._parse_resource_name(custom_job_resource_name)
-    return f"https://console.cloud.google.com/ai/platform/locations/{fields['location']}/training/{fields['custom_job']}?project={fields['project']}"
+    # Bind local variables to avoid repeated dict access in f-string
+    location = fields["location"]
+    custom_job = fields["custom_job"]
+    project = fields["project"]
+    return f"https://console.cloud.google.com/ai/platform/locations/{location}/training/{custom_job}?project={project}"
 
 
 def custom_job_tensorboard_console_uri(
