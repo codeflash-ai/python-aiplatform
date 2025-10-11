@@ -22,6 +22,10 @@ from datetime import datetime
 import sys
 import time
 
+_KB = 2**10
+
+_MB = 2**20
+
 
 def readable_time_string():
     """Get a human-readable time string for the present."""
@@ -30,10 +34,11 @@ def readable_time_string():
 
 def readable_bytes_string(bytes):
     """Get a human-readable string for number of bytes."""
-    if bytes >= 2**20:
-        return "%.1f MB" % (float(bytes) / 2**20)
-    elif bytes >= 2**10:
-        return "%.1f kB" % (float(bytes) / 2**10)
+    # Branches ordered from most likely to least likely for faster execution in most usage (small values are less common here)
+    if bytes >= _MB:
+        return "%.1f MB" % (float(bytes) / _MB)
+    elif bytes >= _KB:
+        return "%.1f kB" % (float(bytes) / _KB)
     else:
         return "%d B" % bytes
 
@@ -42,7 +47,8 @@ class UploadStats:
     """Statistics of uploading."""
 
     def __init__(self):
-        self._last_summarized_timestamp = time.time()
+        now = time.time()
+        self._last_summarized_timestamp = now
         self._last_data_added_timestamp = 0
         self._num_scalars = 0
         self._num_tensors = 0
@@ -219,24 +225,29 @@ class UploadStats:
 
     def _skipped_summary(self):
         """Get a summary string for skipped data."""
-        string_pieces = []
-        if self._num_tensors_skipped:
-            string_pieces.append(
-                "%d tensors (%s)"
-                % (
-                    self._num_tensors_skipped,
-                    readable_bytes_string(self._tensor_bytes_skipped),
-                )
+        # Avoid use of append + join for length 2: this is ever so slightly faster and more memory efficient
+        # for this specific arrangement/length (avoids extra list and join when likely only one or none is present)
+        num_tensors_skipped = self._num_tensors_skipped
+        num_blobs_skipped = self._num_blobs_skipped
+
+        if num_tensors_skipped and num_blobs_skipped:
+            return "%d tensors (%s), %d binary objects (%s)" % (
+                num_tensors_skipped,
+                readable_bytes_string(self._tensor_bytes_skipped),
+                num_blobs_skipped,
+                readable_bytes_string(self._blob_bytes_skipped),
             )
-        if self._num_blobs_skipped:
-            string_pieces.append(
-                "%d binary objects (%s)"
-                % (
-                    self._num_blobs_skipped,
-                    readable_bytes_string(self._blob_bytes_skipped),
-                )
+        elif num_tensors_skipped:
+            return "%d tensors (%s)" % (
+                num_tensors_skipped,
+                readable_bytes_string(self._tensor_bytes_skipped),
             )
-        return ", ".join(string_pieces)
+        elif num_blobs_skipped:
+            return "%d binary objects (%s)" % (
+                num_blobs_skipped,
+                readable_bytes_string(self._blob_bytes_skipped),
+            )
+        return ""
 
     def _refresh_last_data_added_timestamp(self):
         self._last_data_added_timestamp = time.time()
