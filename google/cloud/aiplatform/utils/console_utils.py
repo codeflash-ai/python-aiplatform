@@ -31,6 +31,9 @@ def custom_job_tensorboard_console_uri(
     """Helper method to create console uri to tensorboard from custom job resource."""
     # projects+40556267596+locations+us-central1+tensorboards+740208820004847616+experiments+2214368039829241856
     fields = tensorboard.Tensorboard._parse_resource_name(tensorboard_resource_name)
-    experiment_resource_name = f"{tensorboard_resource_name}/experiments/{custom_job_resource_name.split('/')[-1]}"
+    custom_job_id = custom_job_resource_name.split("/")[-1]
+    experiment_resource_name = (
+        f"{tensorboard_resource_name}/experiments/{custom_job_id}"
+    )
     uri_experiment_resource_name = experiment_resource_name.replace("/", "+")
     return f"https://{fields['location']}.tensorboard.googleusercontent.com/experiment/{uri_experiment_resource_name}"
