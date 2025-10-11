@@ -22,6 +22,14 @@ from datetime import datetime
 import sys
 import time
 
+_KB = 1024
+
+_MB = 1024 * 1024
+
+_KB_f = float(_KB)
+
+_MB_f = float(_MB)
+
 
 def readable_time_string():
     """Get a human-readable time string for the present."""
@@ -30,12 +38,14 @@ def readable_time_string():
 
 def readable_bytes_string(bytes):
     """Get a human-readable string for number of bytes."""
-    if bytes >= 2**20:
-        return "%.1f MB" % (float(bytes) / 2**20)
-    elif bytes >= 2**10:
-        return "%.1f kB" % (float(bytes) / 2**10)
+    # Make a fast path for small numbers, use local var for formatting
+    b = bytes
+    if b >= _MB:
+        return "%.1f MB" % (b / _MB_f)
+    elif b >= _KB:
+        return "%.1f kB" % (b / _KB_f)
     else:
-        return "%d B" % bytes
+        return "%d B" % b
 
 
 class UploadStats:
@@ -179,35 +189,42 @@ class UploadStats:
           - If any data was skipped, a string for all skipped data. Else, `None`.
         """
         self._last_summarized_timestamp = time.time()
-        string_pieces = []
-        string_pieces.append("%d scalars" % self._num_scalars)
+
+        # Precompute counts and bytes for uploaded items
         uploaded_tensor_count = self._num_tensors - self._num_tensors_skipped
         uploaded_tensor_bytes = self._tensor_bytes - self._tensor_bytes_skipped
-        string_pieces.append(
-            "0 tensors"
-            if not uploaded_tensor_count
-            else (
-                "%d tensors (%s)"
+        uploaded_blob_count = self._num_blobs - self._num_blobs_skipped
+        uploaded_blob_bytes = self._blob_bytes - self._blob_bytes_skipped
+
+        # Build string list with direct population - avoids repeated append/else logic
+        string_pieces = [
+            "%d scalars" % self._num_scalars,
+            (
+                "0 tensors"
+                if not uploaded_tensor_count
+                else "%d tensors (%s)"
                 % (
                     uploaded_tensor_count,
                     readable_bytes_string(uploaded_tensor_bytes),
                 )
-            )
-        )
-        uploaded_blob_count = self._num_blobs - self._num_blobs_skipped
-        uploaded_blob_bytes = self._blob_bytes - self._blob_bytes_skipped
-        string_pieces.append(
-            "0 binary objects"
-            if not uploaded_blob_count
-            else (
-                "%d binary objects (%s)"
+            ),
+            (
+                "0 binary objects"
+                if not uploaded_blob_count
+                else "%d binary objects (%s)"
                 % (
                     uploaded_blob_count,
                     readable_bytes_string(uploaded_blob_bytes),
                 )
-            )
-        )
-        skipped_string = self._skipped_summary() if self._skipped_any() else None
+            ),
+        ]
+
+        # Avoid double function call for _skipped_any/_skipped_summary
+        if self._num_tensors_skipped or self._num_blobs_skipped:
+            skipped_string = self._skipped_summary()
+        else:
+            skipped_string = None
+
         return ", ".join(string_pieces), skipped_string
 
     def _skipped_any(self):
@@ -219,9 +236,9 @@ class UploadStats:
 
     def _skipped_summary(self):
         """Get a summary string for skipped data."""
-        string_pieces = []
+        pieces = []
         if self._num_tensors_skipped:
-            string_pieces.append(
+            pieces.append(
                 "%d tensors (%s)"
                 % (
                     self._num_tensors_skipped,
@@ -229,14 +246,14 @@ class UploadStats:
                 )
             )
         if self._num_blobs_skipped:
-            string_pieces.append(
+            pieces.append(
                 "%d binary objects (%s)"
                 % (
                     self._num_blobs_skipped,
                     readable_bytes_string(self._blob_bytes_skipped),
                 )
             )
-        return ", ".join(string_pieces)
+        return ", ".join(pieces)
 
     def _refresh_last_data_added_timestamp(self):
         self._last_data_added_timestamp = time.time()
