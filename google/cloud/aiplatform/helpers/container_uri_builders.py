@@ -171,42 +171,48 @@ def _get_closest_match_prebuilt_container_uri(
     region = region.split("-", 1)[0]
     framework = framework.lower()
 
-    if not URI_MAP.get(region):
+    region_map = URI_MAP.get(region)
+    if not region_map:
         raise ValueError(
             f"Unsupported container region `{region}`, supported regions are "
             f"{', '.join(URI_MAP.keys())}. "
             f"{DOCS_URI_MESSAGE}"
         )
 
-    if not URI_MAP[region].get(framework):
+    framework_map = region_map.get(framework)
+    if not framework_map:
         raise ValueError(
             f"No containers found for framework `{framework}`. Supported frameworks are "
-            f"{', '.join(URI_MAP[region].keys())} {DOCS_URI_MESSAGE}"
+            f"{', '.join(region_map.keys())} {DOCS_URI_MESSAGE}"
         )
 
-    if not URI_MAP[region][framework].get(accelerator):
+    accelerator_map = framework_map.get(accelerator)
+    if not accelerator_map:
         raise ValueError(
             f"{framework} containers do not support `{accelerator}` accelerator. Supported accelerators "
-            f"are {', '.join(URI_MAP[region][framework].keys())}. {DOCS_URI_MESSAGE}"
+            f"are {', '.join(framework_map.keys())}. {DOCS_URI_MESSAGE}"
         )
 
-    framework_version = version.Version(framework_version)
-    available_version_list = [
-        version.Version(available_version)
-        for available_version in URI_MAP[region][framework][accelerator].keys()
-    ]
-    try:
-        closest_version = min(
-            [
-                available_version
-                for available_version in available_version_list
-                if available_version >= framework_version
-                # manually implement Version.major for packaging < 20.0
-                and available_version._version.release[0]
-                == framework_version._version.release[0]
-            ]
-        )
-    except ValueError:
+    # Fast path: If exact version exists, return immediately
+    if framework_version in accelerator_map:
+        return accelerator_map[framework_version]
+
+    framework_version_obj = version.Version(framework_version)
+    candidates = []
+    major = framework_version_obj._version.release[0]
+
+    # Avoid global list comprehension; iterate and build candidate list early-exit min.
+    for ver_str in accelerator_map.keys():
+        ver_obj = version.Version(ver_str)
+        # manually implement Version.major for packaging < 20.0
+        if ver_obj >= framework_version_obj and ver_obj._version.release[0] == major:
+            candidates.append(ver_obj)
+
+    if not candidates:
+        available_version_list = [
+            version.Version(available_version)
+            for available_version in accelerator_map.keys()
+        ]
         raise ValueError(
             f"You are using `{framework}` version `{framework_version}`. "
             f"Vertex pre-built containers support up to `{framework}` version "
@@ -214,13 +220,14 @@ def _get_closest_match_prebuilt_container_uri(
             f"Please build your own custom container. {DOCS_URI_MESSAGE}"
         ) from None
 
-    if closest_version != framework_version:
+    closest_version = min(candidates)
+    if closest_version != framework_version_obj:
         warnings.warn(
             f"No exact match for `{framework}` version `{framework_version}`. "
             f"Pre-built container for `{framework}` version `{closest_version}` is used. "
             f"{DOCS_URI_MESSAGE}"
         )
 
-    final_uri = URI_MAP[region][framework][accelerator].get(str(closest_version))
+    final_uri = accelerator_map.get(str(closest_version))
 
     return final_uri
