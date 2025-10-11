@@ -20,6 +20,8 @@ from google.cloud.aiplatform import initializer
 from google.cloud.aiplatform.constants import prediction
 from packaging import version
 
+_CONTAINER_URI_REGEX = re.compile(prediction.CONTAINER_URI_REGEX)
+
 
 def get_prebuilt_prediction_container_uri(
     framework: str,
@@ -123,7 +125,7 @@ def is_prebuilt_prediction_container_uri(image_uri: str) -> bool:
     Returns:
         If the image is prebuilt by Vertex AI prediction.
     """
-    return re.fullmatch(prediction.CONTAINER_URI_REGEX, image_uri) is not None
+    return _CONTAINER_URI_REGEX.fullmatch(image_uri) is not None
 
 
 # TODO(b/264191784) Deduplicate this method
