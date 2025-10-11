@@ -115,11 +115,9 @@ def get_prediction_aip_http_port(
         The first element in the serving_container_ports. If there is no any values in it,
         return the default http port.
     """
-    return (
-        serving_container_ports[0]
-        if serving_container_ports is not None and len(serving_container_ports) > 0
-        else prediction.DEFAULT_AIP_HTTP_PORT
-    )
+    if serving_container_ports:
+        return serving_container_ports[0]
+    return prediction.DEFAULT_AIP_HTTP_PORT
 
 
 def download_model_artifacts(artifact_uri: str) -> None:
