@@ -25,6 +25,8 @@ from immutabledict import immutabledict
 from google.cloud.aiplatform import initializer
 from google.cloud.aiplatform.utils import resource_manager_utils
 
+_auth_req = google.auth.transport.requests.Request()
+
 SUPPORTED_RAY_VERSIONS = immutabledict(
     {"2.9": "2.9.3", "2.33": "2.33.0", "2.42": "2.42.0", "2.47": "2.47.1"}
 )
@@ -167,6 +169,5 @@ def get_bearer_token():
 
     # creds.valid is False, and creds.token is None
     # Need to refresh credentials to populate those
-    auth_req = google.auth.transport.requests.Request()
-    creds.refresh(auth_req)
+    creds.refresh(_auth_req)
     return creds.token
