@@ -333,6 +333,17 @@ class Importance(_common.CaseInSensitiveEnum):
     """Low importance."""
 
 
+class EvaluationItemType(_common.CaseInSensitiveEnum):
+    """The type of the EvaluationItem."""
+
+    EVALUATION_ITEM_TYPE_UNSPECIFIED = "EVALUATION_ITEM_TYPE_UNSPECIFIED"
+    """The default value. This value is unused."""
+    REQUEST = "REQUEST"
+    """The EvaluationItem is a request to evaluate."""
+    RESULT = "RESULT"
+    """The EvaluationItem is the result of evaluation."""
+
+
 class GenerateMemoriesResponseGeneratedMemoryAction(_common.CaseInSensitiveEnum):
     """The action to take."""
 
@@ -577,6 +588,20 @@ class EvaluationRun(_common.BaseModel):
     evaluation_results: Optional[EvaluationRunResults] = Field(
         default=None, description="""The results for the evaluation run."""
     )
+
+    def show(self) -> None:
+        """Shows the evaluation result."""
+        from . import _evals_visualization
+
+        if self.state == "SUCCEEDED":
+            eval_result = _evals_visualization._get_eval_result_from_eval_run(
+                self.evaluation_results
+            )
+            _evals_visualization.display_evaluation_result(eval_result, None)
+        else:
+            logger.warning(f"Evaluation Run state: {self.state}.")
+            if self.error:
+                logger.warning(f"Evaluation Run error: {self.error.message}")
 
 
 class EvaluationRunDict(TypedDict, total=False):
@@ -2693,6 +2718,453 @@ class _GetEvaluationRunParametersDict(TypedDict, total=False):
 _GetEvaluationRunParametersOrDict = Union[
     _GetEvaluationRunParameters, _GetEvaluationRunParametersDict
 ]
+
+
+class GetEvaluationSetConfig(_common.BaseModel):
+    """Config for get evaluation set."""
+
+    http_options: Optional[genai_types.HttpOptions] = Field(
+        default=None, description="""Used to override HTTP request options."""
+    )
+
+
+class GetEvaluationSetConfigDict(TypedDict, total=False):
+    """Config for get evaluation set."""
+
+    http_options: Optional[genai_types.HttpOptionsDict]
+    """Used to override HTTP request options."""
+
+
+GetEvaluationSetConfigOrDict = Union[GetEvaluationSetConfig, GetEvaluationSetConfigDict]
+
+
+class _GetEvaluationSetParameters(_common.BaseModel):
+    """Represents a job that gets an evaluation set."""
+
+    name: Optional[str] = Field(default=None, description="""""")
+    config: Optional[GetEvaluationSetConfig] = Field(default=None, description="""""")
+
+
+class _GetEvaluationSetParametersDict(TypedDict, total=False):
+    """Represents a job that gets an evaluation set."""
+
+    name: Optional[str]
+    """"""
+
+    config: Optional[GetEvaluationSetConfigDict]
+    """"""
+
+
+_GetEvaluationSetParametersOrDict = Union[
+    _GetEvaluationSetParameters, _GetEvaluationSetParametersDict
+]
+
+
+class EvaluationSet(_common.BaseModel):
+    """Represents an evaluation set."""
+
+    name: Optional[str] = Field(
+        default=None, description="""The resource name of the evaluation set."""
+    )
+    display_name: Optional[str] = Field(
+        default=None, description="""The display name of the evaluation set."""
+    )
+    evaluation_items: Optional[list[str]] = Field(
+        default=None,
+        description="""The EvaluationItems that are part of this dataset.""",
+    )
+    create_time: Optional[datetime.datetime] = Field(
+        default=None, description="""The create time of the evaluation set."""
+    )
+    update_time: Optional[datetime.datetime] = Field(
+        default=None, description="""The update time of the evaluation set."""
+    )
+    metadata: Optional[dict[str, Any]] = Field(
+        default=None, description="""The metadata of the evaluation set."""
+    )
+
+
+class EvaluationSetDict(TypedDict, total=False):
+    """Represents an evaluation set."""
+
+    name: Optional[str]
+    """The resource name of the evaluation set."""
+
+    display_name: Optional[str]
+    """The display name of the evaluation set."""
+
+    evaluation_items: Optional[list[str]]
+    """The EvaluationItems that are part of this dataset."""
+
+    create_time: Optional[datetime.datetime]
+    """The create time of the evaluation set."""
+
+    update_time: Optional[datetime.datetime]
+    """The update time of the evaluation set."""
+
+    metadata: Optional[dict[str, Any]]
+    """The metadata of the evaluation set."""
+
+
+EvaluationSetOrDict = Union[EvaluationSet, EvaluationSetDict]
+
+
+class GetEvaluationItemConfig(_common.BaseModel):
+    """Config for get evaluation item."""
+
+    http_options: Optional[genai_types.HttpOptions] = Field(
+        default=None, description="""Used to override HTTP request options."""
+    )
+
+
+class GetEvaluationItemConfigDict(TypedDict, total=False):
+    """Config for get evaluation item."""
+
+    http_options: Optional[genai_types.HttpOptionsDict]
+    """Used to override HTTP request options."""
+
+
+GetEvaluationItemConfigOrDict = Union[
+    GetEvaluationItemConfig, GetEvaluationItemConfigDict
+]
+
+
+class _GetEvaluationItemParameters(_common.BaseModel):
+    """Represents a job that gets an evaluation item."""
+
+    name: Optional[str] = Field(default=None, description="""""")
+    config: Optional[GetEvaluationItemConfig] = Field(default=None, description="""""")
+
+
+class _GetEvaluationItemParametersDict(TypedDict, total=False):
+    """Represents a job that gets an evaluation item."""
+
+    name: Optional[str]
+    """"""
+
+    config: Optional[GetEvaluationItemConfigDict]
+    """"""
+
+
+_GetEvaluationItemParametersOrDict = Union[
+    _GetEvaluationItemParameters, _GetEvaluationItemParametersDict
+]
+
+
+class PromptTemplateData(_common.BaseModel):
+    """Message to hold a prompt template and the values to populate the template."""
+
+    values: Optional[dict[str, genai_types.Content]] = Field(
+        default=None, description="""The values for fields in the prompt template."""
+    )
+
+
+class PromptTemplateDataDict(TypedDict, total=False):
+    """Message to hold a prompt template and the values to populate the template."""
+
+    values: Optional[dict[str, genai_types.ContentDict]]
+    """The values for fields in the prompt template."""
+
+
+PromptTemplateDataOrDict = Union[PromptTemplateData, PromptTemplateDataDict]
+
+
+class EvaluationPrompt(_common.BaseModel):
+    """Represents the prompt to be evaluated."""
+
+    text: Optional[str] = Field(default=None, description="""Text prompt.""")
+    value: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="""Fields and values that can be used to populate the prompt template.""",
+    )
+    prompt_template_data: Optional[PromptTemplateData] = Field(
+        default=None, description="""Prompt template data."""
+    )
+
+
+class EvaluationPromptDict(TypedDict, total=False):
+    """Represents the prompt to be evaluated."""
+
+    text: Optional[str]
+    """Text prompt."""
+
+    value: Optional[dict[str, Any]]
+    """Fields and values that can be used to populate the prompt template."""
+
+    prompt_template_data: Optional[PromptTemplateDataDict]
+    """Prompt template data."""
+
+
+EvaluationPromptOrDict = Union[EvaluationPrompt, EvaluationPromptDict]
+
+
+class CandidateResponse(_common.BaseModel):
+    """Responses from model or agent."""
+
+    candidate: Optional[str] = Field(
+        default=None,
+        description="""The name of the candidate that produced the response.""",
+    )
+    text: Optional[str] = Field(default=None, description="""The text response.""")
+    value: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="""Fields and values that can be used to populate the response template.""",
+    )
+    events: Optional[list[genai_types.Content]] = Field(
+        default=None,
+        description="""Intermediate events (such as tool calls and responses) that led to the final response.""",
+    )
+
+
+class CandidateResponseDict(TypedDict, total=False):
+    """Responses from model or agent."""
+
+    candidate: Optional[str]
+    """The name of the candidate that produced the response."""
+
+    text: Optional[str]
+    """The text response."""
+
+    value: Optional[dict[str, Any]]
+    """Fields and values that can be used to populate the response template."""
+
+    events: Optional[list[genai_types.ContentDict]]
+    """Intermediate events (such as tool calls and responses) that led to the final response."""
+
+
+CandidateResponseOrDict = Union[CandidateResponse, CandidateResponseDict]
+
+
+class EvaluationItemRequest(_common.BaseModel):
+    """Single evaluation request."""
+
+    prompt: Optional[EvaluationPrompt] = Field(
+        default=None, description="""The request/prompt to evaluate."""
+    )
+    golden_response: Optional[CandidateResponse] = Field(
+        default=None, description="""The ideal response or ground truth."""
+    )
+    rubrics: Optional[dict[str, "RubricGroup"]] = Field(
+        default=None,
+        description="""Named groups of rubrics associated with this prompt. The key is a user-defined name for the rubric group.""",
+    )
+    candidate_responses: Optional[list[CandidateResponse]] = Field(
+        default=None,
+        description="""Responses from model under test and other baseline models for comparison.""",
+    )
+
+
+class EvaluationItemRequestDict(TypedDict, total=False):
+    """Single evaluation request."""
+
+    prompt: Optional[EvaluationPromptDict]
+    """The request/prompt to evaluate."""
+
+    golden_response: Optional[CandidateResponseDict]
+    """The ideal response or ground truth."""
+
+    rubrics: Optional[dict[str, "RubricGroupDict"]]
+    """Named groups of rubrics associated with this prompt. The key is a user-defined name for the rubric group."""
+
+    candidate_responses: Optional[list[CandidateResponseDict]]
+    """Responses from model under test and other baseline models for comparison."""
+
+
+EvaluationItemRequestOrDict = Union[EvaluationItemRequest, EvaluationItemRequestDict]
+
+
+class CandidateResult(_common.BaseModel):
+    """Result for a single candidate."""
+
+    candidate: Optional[str] = Field(
+        default=None,
+        description="""The candidate that is being evaluated. The value is the same as the candidate name in the EvaluationRequest.""",
+    )
+    metric: Optional[str] = Field(
+        default=None, description="""The metric that was evaluated."""
+    )
+    score: Optional[float] = Field(
+        default=None, description="""The score of the metric."""
+    )
+    explanation: Optional[str] = Field(
+        default=None, description="""The explanation for the metric."""
+    )
+    rubric_verdicts: Optional[list[RubricVerdict]] = Field(
+        default=None, description="""The rubric verdicts for the metric."""
+    )
+    additional_results: Optional[dict[str, Any]] = Field(
+        default=None, description="""Additional results for the metric."""
+    )
+
+
+class CandidateResultDict(TypedDict, total=False):
+    """Result for a single candidate."""
+
+    candidate: Optional[str]
+    """The candidate that is being evaluated. The value is the same as the candidate name in the EvaluationRequest."""
+
+    metric: Optional[str]
+    """The metric that was evaluated."""
+
+    score: Optional[float]
+    """The score of the metric."""
+
+    explanation: Optional[str]
+    """The explanation for the metric."""
+
+    rubric_verdicts: Optional[list[RubricVerdictDict]]
+    """The rubric verdicts for the metric."""
+
+    additional_results: Optional[dict[str, Any]]
+    """Additional results for the metric."""
+
+
+CandidateResultOrDict = Union[CandidateResult, CandidateResultDict]
+
+
+class EvaluationItemResult(_common.BaseModel):
+    """Represents the result of an evaluation item."""
+
+    evaluation_request: Optional[str] = Field(
+        default=None, description="""The request item that was evaluated."""
+    )
+    evaluation_run: Optional[str] = Field(
+        default=None,
+        description="""The evaluation run that was used to generate the result.""",
+    )
+    request: Optional[EvaluationItemRequest] = Field(
+        default=None, description="""The request that was evaluated."""
+    )
+    metric: Optional[str] = Field(
+        default=None, description="""The metric that was evaluated."""
+    )
+    candidate_results: Optional[list[CandidateResult]] = Field(
+        default=None, description="""TThe results for the metric."""
+    )
+    metadata: Optional[dict[str, Any]] = Field(
+        default=None, description="""Metadata about the evaluation result."""
+    )
+
+
+class EvaluationItemResultDict(TypedDict, total=False):
+    """Represents the result of an evaluation item."""
+
+    evaluation_request: Optional[str]
+    """The request item that was evaluated."""
+
+    evaluation_run: Optional[str]
+    """The evaluation run that was used to generate the result."""
+
+    request: Optional[EvaluationItemRequestDict]
+    """The request that was evaluated."""
+
+    metric: Optional[str]
+    """The metric that was evaluated."""
+
+    candidate_results: Optional[list[CandidateResultDict]]
+    """TThe results for the metric."""
+
+    metadata: Optional[dict[str, Any]]
+    """Metadata about the evaluation result."""
+
+
+EvaluationItemResultOrDict = Union[EvaluationItemResult, EvaluationItemResultDict]
+
+
+class EvaluationItem(_common.BaseModel):
+    """EvaluationItem is a single evaluation request or result.
+
+    The content of an EvaluationItem is immutable - it cannot be updated once
+    created. EvaluationItems can be deleted when no longer needed.
+    """
+
+    name: Optional[str] = Field(
+        default=None, description="""The resource name of the EvaluationItem."""
+    )
+    display_name: Optional[str] = Field(
+        default=None, description="""The display name of the EvaluationItem."""
+    )
+    metadata: Optional[dict[str, Any]] = Field(
+        default=None, description="""Metadata for the EvaluationItem."""
+    )
+    labels: Optional[dict[str, str]] = Field(
+        default=None, description="""Labels for the EvaluationItem."""
+    )
+    evaluation_item_type: Optional[EvaluationItemType] = Field(
+        default=None, description="""The type of the EvaluationItem."""
+    )
+    evaluation_request: Optional[EvaluationItemRequest] = Field(
+        default=None, description="""The request to evaluate."""
+    )
+    evaluation_response: Optional[EvaluationItemResult] = Field(
+        default=None, description="""The response from evaluation."""
+    )
+    gcs_uri: Optional[str] = Field(
+        default=None,
+        description="""The Cloud Storage object where the request or response is stored.""",
+    )
+    create_time: Optional[datetime.datetime] = Field(
+        default=None, description="""Timestamp when this item was created."""
+    )
+    error: Optional[genai_types.GoogleRpcStatus] = Field(
+        default=None, description="""Error for the evaluation item."""
+    )
+
+    # TODO(b/448806531): Remove all the overridden _from_response methods once the
+    # ticket is resolved and published.
+    @classmethod
+    def _from_response(
+        cls: typing.Type["EvaluationItem"],
+        *,
+        response: dict[str, object],
+        kwargs: dict[str, object],
+    ) -> "EvaluationItem":
+        """Converts a dictionary response into a EvaluationItem object."""
+
+        response = _camel_key_to_snake(response)
+        result = super()._from_response(response=response, kwargs=kwargs)
+        return result
+
+
+class EvaluationItemDict(TypedDict, total=False):
+    """EvaluationItem is a single evaluation request or result.
+
+    The content of an EvaluationItem is immutable - it cannot be updated once
+    created. EvaluationItems can be deleted when no longer needed.
+    """
+
+    name: Optional[str]
+    """The resource name of the EvaluationItem."""
+
+    display_name: Optional[str]
+    """The display name of the EvaluationItem."""
+
+    metadata: Optional[dict[str, Any]]
+    """Metadata for the EvaluationItem."""
+
+    labels: Optional[dict[str, str]]
+    """Labels for the EvaluationItem."""
+
+    evaluation_item_type: Optional[EvaluationItemType]
+    """The type of the EvaluationItem."""
+
+    evaluation_request: Optional[EvaluationItemRequestDict]
+    """The request to evaluate."""
+
+    evaluation_response: Optional[EvaluationItemResultDict]
+    """The response from evaluation."""
+
+    gcs_uri: Optional[str]
+    """The Cloud Storage object where the request or response is stored."""
+
+    create_time: Optional[datetime.datetime]
+    """Timestamp when this item was created."""
+
+    error: Optional[genai_types.GoogleRpcStatusDict]
+    """Error for the evaluation item."""
+
+
+EvaluationItemOrDict = Union[EvaluationItem, EvaluationItemDict]
 
 
 class OptimizeConfig(_common.BaseModel):
@@ -5334,6 +5806,10 @@ class GenerateAgentEngineMemoriesConfig(_common.BaseModel):
         default=True,
         description="""Waits for the operation to complete before returning.""",
     )
+    revision_labels: Optional[dict[str, str]] = Field(
+        default=None,
+        description="""Labels to apply to the memory revision. For example, you can use this to label a revision with its data source.""",
+    )
 
 
 class GenerateAgentEngineMemoriesConfigDict(TypedDict, total=False):
@@ -5352,6 +5828,9 @@ class GenerateAgentEngineMemoriesConfigDict(TypedDict, total=False):
 
     wait_for_completion: Optional[bool]
     """Waits for the operation to complete before returning."""
+
+    revision_labels: Optional[dict[str, str]]
+    """Labels to apply to the memory revision. For example, you can use this to label a revision with its data source."""
 
 
 GenerateAgentEngineMemoriesConfigOrDict = Union[
@@ -5438,6 +5917,14 @@ class GenerateMemoriesResponseGeneratedMemory(_common.BaseModel):
     action: Optional[GenerateMemoriesResponseGeneratedMemoryAction] = Field(
         default=None, description="""The action to take."""
     )
+    previous_revision: Optional[str] = Field(
+        default=None,
+        description="""The previous revision of the Memory before the action was performed. This
+      field is only set if the action is `UPDATED` or `DELETED`. You can use
+      this to rollback the Memory to the previous revision, undoing the action.
+      Format:
+      `projects/{project}/locations/{location}/reasoningEngines/{reasoning_engine}/memories/{memory}/revisions/{revision}`""",
+    )
 
 
 class GenerateMemoriesResponseGeneratedMemoryDict(TypedDict, total=False):
@@ -5448,6 +5935,13 @@ class GenerateMemoriesResponseGeneratedMemoryDict(TypedDict, total=False):
 
     action: Optional[GenerateMemoriesResponseGeneratedMemoryAction]
     """The action to take."""
+
+    previous_revision: Optional[str]
+    """The previous revision of the Memory before the action was performed. This
+      field is only set if the action is `UPDATED` or `DELETED`. You can use
+      this to rollback the Memory to the previous revision, undoing the action.
+      Format:
+      `projects/{project}/locations/{location}/reasoningEngines/{reasoning_engine}/memories/{memory}/revisions/{revision}`"""
 
 
 GenerateMemoriesResponseGeneratedMemoryOrDict = Union[
@@ -5932,6 +6426,108 @@ RetrieveMemoriesResponseOrDict = Union[
 ]
 
 
+class RollbackAgentEngineMemoryConfig(_common.BaseModel):
+    """Config for rolling back a memory."""
+
+    http_options: Optional[genai_types.HttpOptions] = Field(
+        default=None, description="""Used to override HTTP request options."""
+    )
+    wait_for_completion: Optional[bool] = Field(
+        default=True,
+        description="""Waits for the operation to complete before returning.""",
+    )
+
+
+class RollbackAgentEngineMemoryConfigDict(TypedDict, total=False):
+    """Config for rolling back a memory."""
+
+    http_options: Optional[genai_types.HttpOptionsDict]
+    """Used to override HTTP request options."""
+
+    wait_for_completion: Optional[bool]
+    """Waits for the operation to complete before returning."""
+
+
+RollbackAgentEngineMemoryConfigOrDict = Union[
+    RollbackAgentEngineMemoryConfig, RollbackAgentEngineMemoryConfigDict
+]
+
+
+class _RollbackAgentEngineMemoryRequestParameters(_common.BaseModel):
+    """Parameters for generating agent engine memories."""
+
+    name: Optional[str] = Field(
+        default=None, description="""Name of the agent engine memory to rollback."""
+    )
+    target_revision_id: Optional[str] = Field(
+        default=None, description="""The ID of the revision to rollback to."""
+    )
+    config: Optional[RollbackAgentEngineMemoryConfig] = Field(
+        default=None, description=""""""
+    )
+
+
+class _RollbackAgentEngineMemoryRequestParametersDict(TypedDict, total=False):
+    """Parameters for generating agent engine memories."""
+
+    name: Optional[str]
+    """Name of the agent engine memory to rollback."""
+
+    target_revision_id: Optional[str]
+    """The ID of the revision to rollback to."""
+
+    config: Optional[RollbackAgentEngineMemoryConfigDict]
+    """"""
+
+
+_RollbackAgentEngineMemoryRequestParametersOrDict = Union[
+    _RollbackAgentEngineMemoryRequestParameters,
+    _RollbackAgentEngineMemoryRequestParametersDict,
+]
+
+
+class AgentEngineRollbackMemoryOperation(_common.BaseModel):
+    """Operation that rolls back a memory."""
+
+    name: Optional[str] = Field(
+        default=None,
+        description="""The server-assigned name, which is only unique within the same service that originally returns it. If you use the default HTTP mapping, the `name` should be a resource name ending with `operations/{unique_id}`.""",
+    )
+    metadata: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="""Service-specific metadata associated with the operation. It typically contains progress information and common metadata such as create time. Some services might not provide such metadata.  Any method that returns a long-running operation should document the metadata type, if any.""",
+    )
+    done: Optional[bool] = Field(
+        default=None,
+        description="""If the value is `false`, it means the operation is still in progress. If `true`, the operation is completed, and either `error` or `response` is available.""",
+    )
+    error: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="""The error result of the operation in case of failure or cancellation.""",
+    )
+
+
+class AgentEngineRollbackMemoryOperationDict(TypedDict, total=False):
+    """Operation that rolls back a memory."""
+
+    name: Optional[str]
+    """The server-assigned name, which is only unique within the same service that originally returns it. If you use the default HTTP mapping, the `name` should be a resource name ending with `operations/{unique_id}`."""
+
+    metadata: Optional[dict[str, Any]]
+    """Service-specific metadata associated with the operation. It typically contains progress information and common metadata such as create time. Some services might not provide such metadata.  Any method that returns a long-running operation should document the metadata type, if any."""
+
+    done: Optional[bool]
+    """If the value is `false`, it means the operation is still in progress. If `true`, the operation is completed, and either `error` or `response` is available."""
+
+    error: Optional[dict[str, Any]]
+    """The error result of the operation in case of failure or cancellation."""
+
+
+AgentEngineRollbackMemoryOperationOrDict = Union[
+    AgentEngineRollbackMemoryOperation, AgentEngineRollbackMemoryOperationDict
+]
+
+
 class UpdateAgentEngineMemoryConfig(_common.BaseModel):
     """Config for updating agent engine memory."""
 
@@ -6048,6 +6644,194 @@ class _UpdateAgentEngineMemoryRequestParametersDict(TypedDict, total=False):
 _UpdateAgentEngineMemoryRequestParametersOrDict = Union[
     _UpdateAgentEngineMemoryRequestParameters,
     _UpdateAgentEngineMemoryRequestParametersDict,
+]
+
+
+class GetAgentEngineMemoryRevisionConfig(_common.BaseModel):
+    """Config for getting an Agent Engine Memory Revision."""
+
+    http_options: Optional[genai_types.HttpOptions] = Field(
+        default=None, description="""Used to override HTTP request options."""
+    )
+
+
+class GetAgentEngineMemoryRevisionConfigDict(TypedDict, total=False):
+    """Config for getting an Agent Engine Memory Revision."""
+
+    http_options: Optional[genai_types.HttpOptionsDict]
+    """Used to override HTTP request options."""
+
+
+GetAgentEngineMemoryRevisionConfigOrDict = Union[
+    GetAgentEngineMemoryRevisionConfig, GetAgentEngineMemoryRevisionConfigDict
+]
+
+
+class _GetAgentEngineMemoryRevisionRequestParameters(_common.BaseModel):
+    """Parameters for getting an Agent Engine memory revision."""
+
+    name: Optional[str] = Field(
+        default=None, description="""Name of the agent engine."""
+    )
+    config: Optional[GetAgentEngineMemoryRevisionConfig] = Field(
+        default=None, description=""""""
+    )
+
+
+class _GetAgentEngineMemoryRevisionRequestParametersDict(TypedDict, total=False):
+    """Parameters for getting an Agent Engine memory revision."""
+
+    name: Optional[str]
+    """Name of the agent engine."""
+
+    config: Optional[GetAgentEngineMemoryRevisionConfigDict]
+    """"""
+
+
+_GetAgentEngineMemoryRevisionRequestParametersOrDict = Union[
+    _GetAgentEngineMemoryRevisionRequestParameters,
+    _GetAgentEngineMemoryRevisionRequestParametersDict,
+]
+
+
+class MemoryRevision(_common.BaseModel):
+    """A memory revision."""
+
+    name: Optional[str] = Field(
+        default=None,
+        description="""Identifier. The resource name of the Memory Revision. Format: `projects/{project}/locations/{location}/reasoningEngines/{reasoning_engine}/memories/{memory}/revisions/{memory_revision}`""",
+    )
+    create_time: Optional[datetime.datetime] = Field(
+        default=None,
+        description="""Output only. Timestamp when this Memory Revision was created.""",
+    )
+    expire_time: Optional[datetime.datetime] = Field(
+        default=None,
+        description="""Output only. Timestamp of when this resource is considered expired.""",
+    )
+    fact: Optional[str] = Field(
+        default=None,
+        description="""Output only. The fact of the Memory Revision. This corresponds to the `fact` field of the parent Memory at the time of revision creation.""",
+    )
+    labels: Optional[dict[str, str]] = Field(
+        default=None,
+        description="""Output only. The labels of the Memory Revision. These labels are applied to the MemoryRevision when it is created based on `GenerateMemoriesRequest.revision_labels`.""",
+    )
+
+
+class MemoryRevisionDict(TypedDict, total=False):
+    """A memory revision."""
+
+    name: Optional[str]
+    """Identifier. The resource name of the Memory Revision. Format: `projects/{project}/locations/{location}/reasoningEngines/{reasoning_engine}/memories/{memory}/revisions/{memory_revision}`"""
+
+    create_time: Optional[datetime.datetime]
+    """Output only. Timestamp when this Memory Revision was created."""
+
+    expire_time: Optional[datetime.datetime]
+    """Output only. Timestamp of when this resource is considered expired."""
+
+    fact: Optional[str]
+    """Output only. The fact of the Memory Revision. This corresponds to the `fact` field of the parent Memory at the time of revision creation."""
+
+    labels: Optional[dict[str, str]]
+    """Output only. The labels of the Memory Revision. These labels are applied to the MemoryRevision when it is created based on `GenerateMemoriesRequest.revision_labels`."""
+
+
+MemoryRevisionOrDict = Union[MemoryRevision, MemoryRevisionDict]
+
+
+class ListAgentEngineMemoryRevisionsConfig(_common.BaseModel):
+    """Config for listing Agent Engine memory revisions."""
+
+    http_options: Optional[genai_types.HttpOptions] = Field(
+        default=None, description="""Used to override HTTP request options."""
+    )
+    page_size: Optional[int] = Field(default=None, description="""""")
+    page_token: Optional[str] = Field(default=None, description="""""")
+    filter: Optional[str] = Field(
+        default=None,
+        description="""An expression for filtering the results of the request.
+      For field names both snake_case and camelCase are supported.""",
+    )
+
+
+class ListAgentEngineMemoryRevisionsConfigDict(TypedDict, total=False):
+    """Config for listing Agent Engine memory revisions."""
+
+    http_options: Optional[genai_types.HttpOptionsDict]
+    """Used to override HTTP request options."""
+
+    page_size: Optional[int]
+    """"""
+
+    page_token: Optional[str]
+    """"""
+
+    filter: Optional[str]
+    """An expression for filtering the results of the request.
+      For field names both snake_case and camelCase are supported."""
+
+
+ListAgentEngineMemoryRevisionsConfigOrDict = Union[
+    ListAgentEngineMemoryRevisionsConfig, ListAgentEngineMemoryRevisionsConfigDict
+]
+
+
+class _ListAgentEngineMemoryRevisionsRequestParameters(_common.BaseModel):
+    """Parameters for listing Agent Engine memory revisions."""
+
+    name: Optional[str] = Field(
+        default=None, description="""Name of the Agent Engine memory"""
+    )
+    config: Optional[ListAgentEngineMemoryRevisionsConfig] = Field(
+        default=None, description=""""""
+    )
+
+
+class _ListAgentEngineMemoryRevisionsRequestParametersDict(TypedDict, total=False):
+    """Parameters for listing Agent Engine memory revisions."""
+
+    name: Optional[str]
+    """Name of the Agent Engine memory"""
+
+    config: Optional[ListAgentEngineMemoryRevisionsConfigDict]
+    """"""
+
+
+_ListAgentEngineMemoryRevisionsRequestParametersOrDict = Union[
+    _ListAgentEngineMemoryRevisionsRequestParameters,
+    _ListAgentEngineMemoryRevisionsRequestParametersDict,
+]
+
+
+class ListAgentEngineMemoryRevisionsResponse(_common.BaseModel):
+    """Response for listing agent engine memory revisions."""
+
+    sdk_http_response: Optional[genai_types.HttpResponse] = Field(
+        default=None, description="""Used to retain the full HTTP response."""
+    )
+    next_page_token: Optional[str] = Field(default=None, description="""""")
+    memory_revisions: Optional[list[MemoryRevision]] = Field(
+        default=None, description="""List of memory revisions."""
+    )
+
+
+class ListAgentEngineMemoryRevisionsResponseDict(TypedDict, total=False):
+    """Response for listing agent engine memory revisions."""
+
+    sdk_http_response: Optional[genai_types.HttpResponseDict]
+    """Used to retain the full HTTP response."""
+
+    next_page_token: Optional[str]
+    """"""
+
+    memory_revisions: Optional[list[MemoryRevisionDict]]
+    """List of memory revisions."""
+
+
+ListAgentEngineMemoryRevisionsResponseOrDict = Union[
+    ListAgentEngineMemoryRevisionsResponse, ListAgentEngineMemoryRevisionsResponseDict
 ]
 
 
@@ -6995,7 +7779,7 @@ class _GetAgentEngineSessionRequestParameters(_common.BaseModel):
     """Parameters for getting an agent engine session."""
 
     name: Optional[str] = Field(
-        default=None, description="""Name of the agent engine."""
+        default=None, description="""Name of the agent engine session."""
     )
     config: Optional[GetAgentEngineSessionConfig] = Field(
         default=None, description=""""""
@@ -7006,7 +7790,7 @@ class _GetAgentEngineSessionRequestParametersDict(TypedDict, total=False):
     """Parameters for getting an agent engine session."""
 
     name: Optional[str]
-    """Name of the agent engine."""
+    """Name of the agent engine session."""
 
     config: Optional[GetAgentEngineSessionConfigDict]
     """"""
@@ -7265,10 +8049,6 @@ class EventActions(_common.BaseModel):
         default=None,
         description="""Optional. If set, the event transfers to the specified agent.""",
     )
-    transfer_to_agent: Optional[bool] = Field(
-        default=None,
-        description="""Deprecated. If set, the event transfers to the specified agent.""",
-    )
 
 
 class EventActionsDict(TypedDict, total=False):
@@ -7291,9 +8071,6 @@ class EventActionsDict(TypedDict, total=False):
 
     transfer_agent: Optional[str]
     """Optional. If set, the event transfers to the specified agent."""
-
-    transfer_to_agent: Optional[bool]
-    """Deprecated. If set, the event transfers to the specified agent."""
 
 
 EventActionsOrDict = Union[EventActions, EventActionsDict]
@@ -7510,7 +8287,7 @@ ListAgentEngineSessionEventsConfigOrDict = Union[
 
 
 class _ListAgentEngineSessionEventsRequestParameters(_common.BaseModel):
-    """Parameters for listing agent engines."""
+    """Parameters for listing agent engine session events."""
 
     name: Optional[str] = Field(
         default=None, description="""Name of the agent engine session."""
@@ -7521,7 +8298,7 @@ class _ListAgentEngineSessionEventsRequestParameters(_common.BaseModel):
 
 
 class _ListAgentEngineSessionEventsRequestParametersDict(TypedDict, total=False):
-    """Parameters for listing agent engines."""
+    """Parameters for listing agent engine session events."""
 
     name: Optional[str]
     """Name of the agent engine session."""
@@ -9926,8 +10703,8 @@ class EvalRunInferenceConfigDict(TypedDict, total=False):
 EvalRunInferenceConfigOrDict = Union[EvalRunInferenceConfig, EvalRunInferenceConfigDict]
 
 
-class AgentMetadata(_common.BaseModel):
-    """AgentMetadata for agent eval."""
+class AgentInfo(_common.BaseModel):
+    """The agent info of an agent, used for agent eval."""
 
     name: Optional[str] = Field(
         default=None, description="""Agent name, used as an identifier."""
@@ -9941,13 +10718,10 @@ class AgentMetadata(_common.BaseModel):
     tool_declarations: Optional[genai_types.ToolListUnion] = Field(
         default=None, description="""List of tools used by the Agent."""
     )
-    sub_agent_names: Optional[list[str]] = Field(
-        default=None, description="""List of sub-agent names."""
-    )
 
 
-class AgentMetadataDict(TypedDict, total=False):
-    """AgentMetadata for agent eval."""
+class AgentInfoDict(TypedDict, total=False):
+    """The agent info of an agent, used for agent eval."""
 
     name: Optional[str]
     """Agent name, used as an identifier."""
@@ -9961,11 +10735,8 @@ class AgentMetadataDict(TypedDict, total=False):
     tool_declarations: Optional[genai_types.ToolListUnionDict]
     """List of tools used by the Agent."""
 
-    sub_agent_names: Optional[list[str]]
-    """List of sub-agent names."""
 
-
-AgentMetadataOrDict = Union[AgentMetadata, AgentMetadataDict]
+AgentInfoOrDict = Union[AgentInfo, AgentInfoDict]
 
 
 class ContentMapContents(_common.BaseModel):
@@ -10197,11 +10968,11 @@ class EvalCase(_common.BaseModel):
     )
     intermediate_events: Optional[list[Event]] = Field(
         default=None,
-        description="""Intermediate events of a single turn in agent eval or intermediate events of the last turn for multi-turn agent eval.""",
+        description="""This field is experimental and may change in future versions. Intermediate events of a single turn in an agent run or intermediate events of the last turn for multi-turn an agent run.""",
     )
-    agent_metadata: Optional[dict[str, AgentMetadata]] = Field(
+    agent_info: Optional[AgentInfo] = Field(
         default=None,
-        description="""Agent metadata for agent eval, keyed by agent name. This can be extended for multi-agent evaluation.""",
+        description="""This field is experimental and may change in future versions. The agent info of the agent under evaluation. This can be extended for multi-agent evaluation.""",
     )
     # Allow extra fields to support custom metric prompts and stay backward compatible.
     model_config = ConfigDict(frozen=True, extra="allow")
@@ -10232,10 +11003,10 @@ class EvalCaseDict(TypedDict, total=False):
     """Unique identifier for the evaluation case."""
 
     intermediate_events: Optional[list[EventDict]]
-    """Intermediate events of a single turn in agent eval or intermediate events of the last turn for multi-turn agent eval."""
+    """This field is experimental and may change in future versions. Intermediate events of a single turn in an agent run or intermediate events of the last turn for multi-turn an agent run."""
 
-    agent_metadata: Optional[dict[str, AgentMetadataDict]]
-    """Agent metadata for agent eval, keyed by agent name. This can be extended for multi-agent evaluation."""
+    agent_info: Optional[AgentInfoDict]
+    """This field is experimental and may change in future versions. The agent info of the agent under evaluation. This can be extended for multi-agent evaluation."""
 
 
 EvalCaseOrDict = Union[EvalCase, EvalCaseDict]
@@ -10602,6 +11373,34 @@ class EvaluationResultDict(TypedDict, total=False):
 
 
 EvaluationResultOrDict = Union[EvaluationResult, EvaluationResultDict]
+
+
+class SessionInput(_common.BaseModel):
+    """This field is experimental and may change in future versions.
+
+    Input to initialize a session and run an agent, used for agent evaluation.
+    """
+
+    user_id: Optional[str] = Field(default=None, description="""The user id.""")
+    state: Optional[dict[str, str]] = Field(
+        default=None, description="""The state of the session."""
+    )
+
+
+class SessionInputDict(TypedDict, total=False):
+    """This field is experimental and may change in future versions.
+
+    Input to initialize a session and run an agent, used for agent evaluation.
+    """
+
+    user_id: Optional[str]
+    """The user id."""
+
+    state: Optional[dict[str, str]]
+    """The state of the session."""
+
+
+SessionInputOrDict = Union[SessionInput, SessionInputDict]
 
 
 class WinRateStats(_common.BaseModel):
